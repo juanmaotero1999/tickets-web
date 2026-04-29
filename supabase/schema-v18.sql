@@ -25,6 +25,9 @@ create table if not exists users (
   two_factor_enabled boolean default false,
   account_status text default 'active',
   verification_status text default 'not_verified',
+  seller_rating numeric default 5,
+  seller_reviews_count int default 0,
+  seller_sales_count int default 0,
   role text default 'user',
   created_at timestamp default now()
 );
@@ -57,6 +60,8 @@ create table if not exists listings (
   status text default 'active',
   seller_payment_method text,
   seller_payment_value text,
+  sector text,
+  seats text,
   created_at timestamp default now()
 );
 
@@ -109,6 +114,9 @@ alter table users add column if not exists preferred_currency text default 'ARS'
 alter table users add column if not exists two_factor_enabled boolean default false;
 alter table users add column if not exists account_status text default 'active';
 alter table users add column if not exists verification_status text default 'not_verified';
+alter table users add column if not exists seller_rating numeric default 5;
+alter table users add column if not exists seller_reviews_count int default 0;
+alter table users add column if not exists seller_sales_count int default 0;
 alter table users add column if not exists role text default 'user';
 alter table users add column if not exists created_at timestamp default now();
 
@@ -135,6 +143,8 @@ alter table listings add column if not exists exchange_targets jsonb;
 alter table listings add column if not exists status text default 'active';
 alter table listings add column if not exists seller_payment_method text;
 alter table listings add column if not exists seller_payment_value text;
+alter table listings add column if not exists sector text;
+alter table listings add column if not exists seats text;
 alter table listings add column if not exists created_at timestamp default now();
 
 alter table orders add column if not exists listing_id uuid;

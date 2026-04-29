@@ -11,10 +11,12 @@ let state = {
   view: 'home',
   matches: [],
   listings: [],
+  users: [],
   orders: [],
   messages: [],
   notifications: [],
   theme: localStorage.getItem('theme') || 'light',
+  authMode: 'login',
   selectedMatch: null,
   selectedMatchId: null,
   openMatchTabs: [],
@@ -97,6 +99,20 @@ const flagImg = (code, className = 'flag-thumb') => {
 
 const isAdmin = () => ADMIN_EMAILS.includes(state.user?.email) || state.profile?.role === 'admin'
 
+const sellerProfile = (sellerId) => state.users.find(u => u.id === sellerId) || {}
+const sellerName = (sellerId) => {
+  const seller = sellerProfile(sellerId)
+  const name = `${seller.first_name || ''} ${seller.last_name || ''}`.trim()
+  return name || 'Vendedor verificado'
+}
+const sellerReputation = (sellerId) => {
+  const seller = sellerProfile(sellerId)
+  const rating = Number(seller.seller_rating || 5).toFixed(1)
+  const sales = Number(seller.seller_sales_count || 0)
+  const reviews = Number(seller.seller_reviews_count || 0)
+  return `★ ${rating} · ${sales} ventas · ${reviews} opiniones`
+}
+
 function closeMessageModal(result = true) {
   const modal = document.getElementById('messageRoot')
   const resolver = modal?._resolver
@@ -174,11 +190,12 @@ async function ensureProfile() {
   const { data } = await supabase.from('users').select('*').eq('id', state.user.id).maybeSingle()
   if (!data) {
     const meta = state.user.user_metadata || {}
+    const fullName = (meta.full_name || meta.name || '').trim().split(' ')
     await supabase.from('users').insert({
       id: state.user.id,
       email: state.user.email,
-      first_name: meta.first_name || '',
-      last_name: meta.last_name || '',
+      first_name: meta.first_name || fullName[0] || '',
+      last_name: meta.last_name || fullName.slice(1).join(' ') || '',
       document_type: meta.document_type || '',
       document_number: meta.document_number || '',
       account_status: 'active',
@@ -192,12 +209,14 @@ async function ensureProfile() {
 }
 
 async function loadAll() {
-  const [m, l] = await Promise.all([
+  const [m, l, users] = await Promise.all([
     supabase.from('matches').select('*').order('match_number', { ascending:true }),
-    supabase.from('listings').select('*').order('created_at', { ascending:false })
+    supabase.from('listings').select('*').order('created_at', { ascending:false }),
+    supabase.from('users').select('id,first_name,last_name,verification_status,seller_rating,seller_reviews_count,seller_sales_count')
   ])
   state.matches = m.data || []
   state.listings = l.data || []
+  state.users = users.data || []
   if (state.user) {
     const [orders, notifs] = await Promise.all([
       supabase.from('orders').select('*').or(`buyer_id.eq.${state.user.id},seller_id.eq.${state.user.id}`).order('created_at', { ascending:false }),
@@ -264,8 +283,11 @@ function home() {
   <div class="container">
     <section class="hero">
       <div class="hero-main">
-        <h1>Compra, vende e intercambia entradas del Mundial 2026</h1>
-        <p>Buscá partidos por país o sede. Las operaciones quedan registradas y custodiadas dentro de la plataforma.</p>
+        <img class="hero-art" src="/logo_fifa_2026_0.png" alt="FIFA World Cup 2026">
+        <div class="hero-overlay">
+          <h1>Compra, vende e intercambia entradas del Mundial 2026</h1>
+          <p>Buscá partidos por país o sede. Las operaciones quedan registradas y custodiadas dentro de la plataforma.</p>
+        </div>
       </div>
       <div class="hero-side">
         <h3>Operación segura</h3>
@@ -327,17 +349,14 @@ function matchCard(m) {
 }
 
 function authView() {
+  const isRegister = state.authMode === 'register'
   return `
   <div class="container">
-    <div class="grid-2">
-      <div class="panel">
-        <h2>Ingresar</h2>
-        <div class="field"><label>Email</label><input id="loginEmail" class="input"></div><br>
-        <div class="field"><label>Contraseña</label><input id="loginPass" type="password" class="input"></div><br>
-        <button class="pill-btn primary" onclick="window.appActions.login()">Ingresar</button>
-      </div>
-      <div class="panel">
-        <h2>Registrarse</h2>
+    <div class="auth-shell">
+      <div class="panel auth-panel">
+        <h2>${isRegister ? 'Crear cuenta' : 'Ingresar'}</h2>
+        <p class="meta">${isRegister ? 'Completá tus datos para publicar, comprar e intercambiar entradas.' : 'Entrá con tu email o con una cuenta social.'}</p>
+        ${isRegister ? `
         <div class="form-grid">
           <div class="field"><label>Nombre</label><input id="regFirst" class="input"></div>
           <div class="field"><label>Apellido</label><input id="regLast" class="input"></div>
@@ -346,7 +365,19 @@ function authView() {
           <div class="field"><label>Tipo documento</label><select id="regDocType" class="select"><option>DNI</option><option>Pasaporte</option><option>CI</option></select></div>
           <div class="field"><label>Número documento</label><input id="regDoc" class="input"></div>
         </div>
-        <br><button class="pill-btn primary" onclick="window.appActions.register()">Crear cuenta</button>
+        <div class="auth-actions"><button class="pill-btn primary" onclick="window.appActions.register()">Crear cuenta</button></div>
+        <button class="link-btn" onclick="window.appActions.setAuthMode('login')">Ya tengo cuenta</button>
+        ` : `
+        <div class="field"><label>Email</label><input id="loginEmail" class="input"></div>
+        <div class="field"><label>Contraseña</label><input id="loginPass" type="password" class="input"></div>
+        <div class="auth-actions"><button class="pill-btn primary" onclick="window.appActions.login()">Ingresar</button></div>
+        <div class="social-login">
+          <button class="oauth-btn" onclick="window.appActions.oauthLogin('google')">Google</button>
+          <button class="oauth-btn" onclick="window.appActions.oauthLogin('apple')">Apple</button>
+          <button class="oauth-btn" onclick="window.appActions.oauthLogin('facebook')">Facebook</button>
+        </div>
+        <button class="link-btn" onclick="window.appActions.setAuthMode('register')">No tengo cuenta, registrarme</button>
+        `}
       </div>
     </div>
   </div>`
@@ -418,8 +449,12 @@ function matchDetail() {
 
 function listingCard(l, canBuy) {
   return `<div class="item">
-    <strong>${l.type==='exchange'?'Intercambio':'Venta'} · Categoría ${l.category}</strong>
-    <p class="meta">Cantidad: ${l.quantity} · ${l.price ? money(l.price,l.currency) : 'Sin precio'} ${l.type==='exchange' && l.exchange_targets ? `<br>Busca: ${JSON.stringify(l.exchange_targets)}`:''}</p>
+    <div class="listing-head">
+      <strong>${l.type==='exchange'?'Intercambio':'Venta'} · Categoría ${l.category}</strong>
+      <span class="seller-rating">${sellerReputation(l.seller_id)}</span>
+    </div>
+    <p class="meta">Vendedor: ${escapeHtml(sellerName(l.seller_id))}</p>
+    <p class="meta">Cantidad: ${l.quantity} · ${l.price ? money(l.price,l.currency) : 'Sin precio'}${l.sector ? ` · Sector ${escapeHtml(l.sector)}` : ''}${l.seats ? ` · Asientos ${escapeHtml(l.seats)}` : ''} ${l.type==='exchange' && l.exchange_targets ? `<br>Busca: ${JSON.stringify(l.exchange_targets)}`:''}</p>
     ${canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`}
   </div>`
 }
@@ -437,6 +472,8 @@ function sellView(prefMatchId='') {
           <div class="field"><label>Categoría</label><select id="sellCat" class="select"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
           <div class="field"><label>Cantidad</label><input id="sellQty" type="number" min="1" class="input" value="1"></div>
           <div class="field"><label>Precio por entrada</label><input id="sellPrice" type="number" class="input" placeholder="Ej: 390000"></div>
+          <div class="field"><label>Sector</label><input id="sellSector" class="input" placeholder="Ej: 120"></div>
+          <div class="field"><label>Asientos</label><input id="sellSeats" class="input" placeholder="Ej: 5, 6 y 7"></div>
           <div class="field"><label>Moneda</label><select id="sellCurrency" class="select"><option>ARS</option><option>USD</option></select></div>
           <div class="field"><label>Método de cobro</label><select id="payMethod" class="select"><option>Alias</option><option>CBU</option><option>USD</option><option>Wallet</option></select></div>
           <div class="field"><label>Alias / CBU / dato de cobro</label><input id="payValue" class="input"></div>
@@ -543,6 +580,8 @@ function renderModal() {
             <div class="panel" style="box-shadow:none"><h3>Detalle</h3>
               <p><strong>Partido:</strong> #${m.match_number || ''} ${m.home_code || ''} vs ${m.away_code || ''}</p>
               <p><strong>Categoría:</strong> ${l.category || '-'}</p>
+              <p><strong>Sector:</strong> ${l.sector || '-'}</p>
+              <p><strong>Asientos:</strong> ${l.seats || '-'}</p>
               <p><strong>Cantidad:</strong> ${o.quantity || 1}</p>
               <p><strong>Total:</strong> ${money(o.total || l.price || 0, l.currency || 'ARS')}</p>
               <p><strong>Estado:</strong> <span class="badge warn">${statusLabel[o.status] || o.status}</span></p>
@@ -580,6 +619,7 @@ function render() {
 
 window.appActions = {
   setView,
+  setAuthMode(mode){ state.authMode = mode; render() },
   toggleTheme: setTheme,
   requireLogin(view, matchId='') {
     if (!state.user) { state.view = 'auth'; render(); return }
@@ -588,6 +628,13 @@ window.appActions = {
     render()
   },
   async logout(){ await supabase.auth.signOut(); state.view='home'; render() },
+  async oauthLogin(provider){
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: window.location.origin }
+    })
+    if (error) await showMessage(error.message, { title: 'No se pudo ingresar', tone: 'error' })
+  },
   async login(){
     const email = document.getElementById('loginEmail').value.trim()
     const password = document.getElementById('loginPass').value
@@ -669,6 +716,8 @@ window.appActions = {
       status:'active',
       seller_payment_method: document.getElementById('payMethod').value,
       seller_payment_value: document.getElementById('payValue').value,
+      sector: document.getElementById('sellSector').value.trim(),
+      seats: document.getElementById('sellSeats').value.trim(),
       exchange_targets: type==='exchange' ? { text: document.getElementById('exchangeTargets').value } : null
     }
     const { error } = await supabase.from('listings').insert(payload)
