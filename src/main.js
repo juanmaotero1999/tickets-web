@@ -23,12 +23,21 @@ document.body.classList.toggle('dark', state.theme === 'dark')
 
 const ADMIN_EMAILS = ['admin@demo.com', 'juanmaotero1999@gmail.com']
 
+const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[ch]))
+
 const phaseLabels = {
   groups: 'Fase de grupos',
   group: 'Fase de grupos',
-  round16: '16avos / Dieciseisavos',
-  r16: '16avos / Dieciseisavos',
-  round_of_16: '16avos / Dieciseisavos',
+  round32: '16avos de final',
+  round16: 'Octavos de final',
+  r16: 'Octavos de final',
+  round_of_16: 'Octavos de final',
   quarterfinals: 'Cuartos de final',
   qf: 'Cuartos de final',
   semifinals: 'Semifinales',
@@ -66,12 +75,68 @@ const flag = (code) => {
     ARG:'🇦🇷', MEX:'🇲🇽', BRA:'🇧🇷', USA:'🇺🇸', ENG:'🏴', ESP:'🇪🇸', FRA:'🇫🇷', POR:'🇵🇹', CAN:'🇨🇦',
     QAT:'🇶🇦', GER:'🇩🇪', ITA:'🇮🇹', URU:'🇺🇾', COL:'🇨🇴', CHI:'🇨🇱', ECU:'🇪🇨', PAR:'🇵🇾',
     KOR:'🇰🇷', JPN:'🇯🇵', AUS:'🇦🇺', GHA:'🇬🇭', PAN:'🇵🇦', ALG:'🇩🇿', CRO:'🇭🇷', RSA:'🇿🇦',
-    UZB:'🇺🇿', CZE:'🇨🇿', SUI:'🇨🇭', BIH:'🇧🇦', JOR:'🇯🇴', AUT:'🇦🇹', COD:'🇨🇩', MAR:'🇲🇦', TUR:'🇹🇷'
+    UZB:'🇺🇿', CZE:'🇨🇿', SUI:'🇨🇭', BIH:'🇧🇦', JOR:'🇯🇴', AUT:'🇦🇹', COD:'🇨🇩', MAR:'🇲🇦', TUR:'🇹🇷',
+    CIV:'🇨🇮', CUR:'🇨🇼', NED:'🇳🇱', SWE:'🇸🇪', TUN:'🇹🇳', BEL:'🇧🇪', EGY:'🇪🇬', IRN:'🇮🇷', NZL:'🇳🇿',
+    CPV:'🇨🇻', KSA:'🇸🇦', NOR:'🇳🇴', IRQ:'🇮🇶', SEN:'🇸🇳', HAI:'🇭🇹', SCO:'🏴'
   }
   return map[code] || '🏳️'
 }
 
 const isAdmin = () => ADMIN_EMAILS.includes(state.user?.email) || state.profile?.role === 'admin'
+
+function closeMessageModal(result = true) {
+  const modal = document.getElementById('messageRoot')
+  const resolver = modal?._resolver
+  modal?.remove()
+  if (resolver) resolver(result)
+}
+
+function showMessage(message, { title = 'Aviso', tone = 'info' } = {}) {
+  return new Promise(resolve => {
+    let root = document.getElementById('messageRoot')
+    if (!root) {
+      root = document.createElement('div')
+      root.id = 'messageRoot'
+      document.body.appendChild(root)
+    }
+    root._resolver = resolve
+    root.innerHTML = `
+      <div class="modal-backdrop show message-backdrop" onclick="if(event.target.classList.contains('message-backdrop')) window.appActions.closeMessageModal()">
+        <div class="message-modal ${tone}">
+          <div class="message-icon">${tone === 'success' ? '✓' : tone === 'error' ? '!' : 'i'}</div>
+          <h2>${escapeHtml(title)}</h2>
+          <p>${escapeHtml(message)}</p>
+          <button class="pill-btn primary" onclick="window.appActions.closeMessageModal()">Aceptar</button>
+        </div>
+      </div>`
+  })
+}
+
+function askQuantity(max) {
+  return new Promise(resolve => {
+    let root = document.getElementById('messageRoot')
+    if (!root) {
+      root = document.createElement('div')
+      root.id = 'messageRoot'
+      document.body.appendChild(root)
+    }
+    root._resolver = resolve
+    root.innerHTML = `
+      <div class="modal-backdrop show message-backdrop">
+        <div class="message-modal">
+          <div class="message-icon">#</div>
+          <h2>Cantidad de entradas</h2>
+          <p>Disponibles: ${Number(max)}</p>
+          <input id="quantityPrompt" class="input" type="number" min="1" max="${Number(max)}" value="1" />
+          <div class="footer-actions">
+            <button class="secondary-btn" onclick="window.appActions.closeMessageModal(null)">Cancelar</button>
+            <button class="pill-btn primary" onclick="window.appActions.resolveQuantityPrompt()">Continuar</button>
+          </div>
+        </div>
+      </div>`
+    setTimeout(() => document.getElementById('quantityPrompt')?.focus(), 0)
+  })
+}
 
 async function init() {
   const { data: { session } } = await supabase.auth.getSession()
@@ -478,7 +543,7 @@ window.appActions = {
     const email = document.getElementById('loginEmail').value.trim()
     const password = document.getElementById('loginPass').value
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) alert(error.message)
+    if (error) await showMessage(error.message, { title: 'No se pudo ingresar', tone: 'error' })
     else { state.view='home'; await init() }
   },
   async register(){
@@ -489,11 +554,11 @@ window.appActions = {
     const document_type = document.getElementById('regDocType').value
     const document_number = document.getElementById('regDoc').value.trim()
     const { data, error } = await supabase.auth.signUp({ email, password, options:{ data:{ first_name,last_name,document_type,document_number } } })
-    if (error) { alert(error.message); return }
+    if (error) { await showMessage(error.message, { title: 'No se pudo crear la cuenta', tone: 'error' }); return }
     if (data.user) {
       await supabase.from('users').upsert({ id:data.user.id,email,first_name,last_name,document_type,document_number,account_status:'active',verification_status:'not_verified',preferred_currency:'ARS' })
     }
-    alert('Usuario creado. Iniciá sesión.')
+    await showMessage('Usuario creado. Iniciá sesión.', { title: 'Cuenta lista', tone: 'success' })
   },
   applyFilters(){
     const q = document.getElementById('q').value.toLowerCase()
@@ -519,7 +584,7 @@ window.appActions = {
     el.style.display = document.getElementById('sellType').value === 'exchange' ? 'block' : 'none'
   },
   async createListing(){
-    if (!state.user) return alert('Tenés que ingresar.')
+    if (!state.user) return showMessage('Tenés que ingresar para publicar entradas.', { title: 'Ingresá a tu cuenta' })
     const type = document.getElementById('sellType').value
     const payload = {
       type,
@@ -535,33 +600,34 @@ window.appActions = {
       exchange_targets: type==='exchange' ? { text: document.getElementById('exchangeTargets').value } : null
     }
     const { error } = await supabase.from('listings').insert(payload)
-    if (error) alert(error.message)
-    else { alert('Publicación creada'); await loadAll(); render() }
+    if (error) await showMessage(error.message, { title: 'No se pudo publicar', tone: 'error' })
+    else { await showMessage('Tu publicación ya está disponible en el marketplace.', { title: 'Publicación creada', tone: 'success' }); await loadAll(); render() }
   },
   async startBuy(listingId){
     if (!state.user) { state.view='auth'; render(); return }
     const l = state.listings.find(x=>x.id===listingId)
-    if (l.seller_id === state.user.id) return alert('No podés comprar tus propias entradas.')
-    const qty = Number(prompt(`Cantidad a comprar. Disponibles: ${l.quantity}`, '1') || 1)
-    if (qty > Number(l.quantity)) return alert('No hay suficientes entradas disponibles.')
+    if (l.seller_id === state.user.id) return showMessage('No podés comprar tus propias entradas.', { title: 'Operación no permitida' })
+    const qty = Number(await askQuantity(l.quantity))
+    if (!qty) return
+    if (qty > Number(l.quantity)) return showMessage('No hay suficientes entradas disponibles.', { title: 'Cantidad no disponible', tone: 'error' })
     const { data, error } = await supabase.from('orders').insert({
       listing_id: l.id, buyer_id: state.user.id, seller_id: l.seller_id, quantity: qty, total: qty * Number(l.price || 0), status:'pending_payment'
     }).select().single()
-    if (error) { alert(error.message); return }
+    if (error) { await showMessage(error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
     await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
     await supabase.from('notifications').insert([{user_id:l.seller_id,message:'Tenés una nueva venta pendiente.'},{user_id:state.user.id,message:'Compra iniciada. Revisá tus operaciones para avanzar.'}])
-    alert('Compra iniciada. Vas a verla en Mis operaciones.')
+    await showMessage('Vas a ver la operación en Mis operaciones para continuar el proceso.', { title: 'Compra iniciada', tone: 'success' })
     await loadAll(); state.view='my'; render()
   },
   async startExchange(listingId){
     if (!state.user) { state.view='auth'; render(); return }
     const l = state.listings.find(x=>x.id===listingId)
-    if (l.seller_id === state.user.id) return alert('No podés ofertar sobre tu propia publicación.')
+    if (l.seller_id === state.user.id) return showMessage('No podés ofertar sobre tu propia publicación.', { title: 'Operación no permitida' })
     const { error } = await supabase.from('orders').insert({
       listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:1,total:0,status:'exchange_pending'
     })
-    if (error) alert(error.message)
-    else { alert('Oferta de intercambio enviada.'); await loadAll(); state.view='my'; render() }
+    if (error) await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
+    else { await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; render() }
   },
   async saveProfile(){
     const fields = ['first_name','last_name','birth_date','nationality','document_type','document_number','document_country','sex','phone','country','state','city','address','timezone','preferred_language','preferred_currency']
@@ -569,11 +635,17 @@ window.appActions = {
     fields.forEach(k => payload[k] = document.getElementById(`profile_${k}`).value)
     payload.two_factor_enabled = document.getElementById('profile_two_factor_enabled').value === 'true'
     const { error } = await supabase.from('users').upsert(payload)
-    if (error) alert(error.message)
-    else { alert('Perfil actualizado'); await ensureProfile(); render() }
+    if (error) await showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
+    else { await showMessage('Tus datos fueron actualizados.', { title: 'Perfil actualizado', tone: 'success' }); await ensureProfile(); render() }
   },
   async openOrder(id){ await openOrder(id) },
   closeModal(){ document.getElementById('modalRoot')?.remove(); state.selectedOrder=null },
+  closeMessageModal,
+  resolveQuantityPrompt(){
+    const input = document.getElementById('quantityPrompt')
+    const value = Number(input?.value || 0)
+    closeMessageModal(value > 0 ? value : null)
+  },
   async sendMessage(orderId){
     const text = document.getElementById('chatText').value.trim()
     if (!text) return
