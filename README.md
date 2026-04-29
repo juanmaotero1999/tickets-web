@@ -10,6 +10,8 @@
 ## Supabase
 Ejecutar `supabase/schema-v18.sql` en SQL Editor.
 
+Si aparece `Could not find the 'seller_payment_method' column of 'listings' in the schema cache`, volvé a ejecutar ese script completo en Supabase. La versión actual agrega columnas faltantes en tablas existentes y fuerza la recarga del cache de esquema de la API.
+
 ## Admin
 Por defecto:
 - admin@demo.com
