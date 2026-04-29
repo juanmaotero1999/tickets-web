@@ -16,6 +16,8 @@ let state = {
   notifications: [],
   theme: localStorage.getItem('theme') || 'light',
   selectedMatch: null,
+  selectedMatchId: null,
+  openMatchTabs: [],
   selectedOrder: null
 }
 
@@ -34,16 +36,23 @@ const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
 const phaseLabels = {
   groups: 'Fase de grupos',
   group: 'Fase de grupos',
-  round32: '16avos de final',
-  round16: 'Octavos de final',
-  r16: 'Octavos de final',
-  round_of_16: 'Octavos de final',
-  quarterfinals: 'Cuartos de final',
-  qf: 'Cuartos de final',
-  semifinals: 'Semifinales',
-  sf: 'Semifinales',
+  round32: '16avos',
+  round16: '8vos',
+  r16: '8vos',
+  round_of_16: '8vos',
+  quarterfinals: '4tos',
+  qf: '4tos',
+  semifinals: 'Semi',
+  sf: 'Semi',
   third_place: '3er puesto',
   final: 'Final'
+}
+
+const phaseOrder = ['groups', 'group', 'round32', 'round16', 'round_of_16', 'r16', 'quarterfinals', 'qf', 'semifinals', 'sf', 'third_place', 'final']
+const normalizedPhase = (phase = 'groups') => phase === 'third_place' ? 'final' : phase
+const phaseRank = (phase = 'groups') => {
+  const index = phaseOrder.indexOf(normalizedPhase(phase))
+  return index === -1 ? 99 : index
 }
 
 const statusLabel = {
@@ -70,16 +79,20 @@ const fmtDate = (d) => {
   return date.toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
 }
 
-const flag = (code) => {
-  const map = {
-    ARG:'🇦🇷', MEX:'🇲🇽', BRA:'🇧🇷', USA:'🇺🇸', ENG:'🏴', ESP:'🇪🇸', FRA:'🇫🇷', POR:'🇵🇹', CAN:'🇨🇦',
-    QAT:'🇶🇦', GER:'🇩🇪', ITA:'🇮🇹', URU:'🇺🇾', COL:'🇨🇴', CHI:'🇨🇱', ECU:'🇪🇨', PAR:'🇵🇾',
-    KOR:'🇰🇷', JPN:'🇯🇵', AUS:'🇦🇺', GHA:'🇬🇭', PAN:'🇵🇦', ALG:'🇩🇿', CRO:'🇭🇷', RSA:'🇿🇦',
-    UZB:'🇺🇿', CZE:'🇨🇿', SUI:'🇨🇭', BIH:'🇧🇦', JOR:'🇯🇴', AUT:'🇦🇹', COD:'🇨🇩', MAR:'🇲🇦', TUR:'🇹🇷',
-    CIV:'🇨🇮', CUR:'🇨🇼', NED:'🇳🇱', SWE:'🇸🇪', TUN:'🇹🇳', BEL:'🇧🇪', EGY:'🇪🇬', IRN:'🇮🇷', NZL:'🇳🇿',
-    CPV:'🇨🇻', KSA:'🇸🇦', NOR:'🇳🇴', IRQ:'🇮🇶', SEN:'🇸🇳', HAI:'🇭🇹', SCO:'🏴'
-  }
-  return map[code] || '🏳️'
+const flagFiles = {
+  ARG:'ar.png', MEX:'mx.png', RSA:'za.png', KOR:'kr.png', CZE:'cz.png', CAN:'ca.png', BIH:'ba.png',
+  USA:'us.png', PAR:'py.png', HAI:'ht.png', SCO:'gb-sct.png', AUS:'au.png', TUR:'tr.png', BRA:'br.png',
+  MAR:'ma.png', QAT:'qa.png', SUI:'ch.png', CIV:'ci.png', ECU:'ec.png', GER:'de.png', CUR:'cw.png',
+  NED:'nl.png', JPN:'jp.png', SWE:'se.png', TUN:'tn.png', KSA:'sa.png', URU:'uy.png', ESP:'es.png',
+  CPV:'cv.png', IRN:'ir.png', NZL:'nz.png', BEL:'be.png', EGY:'eg.png', FRA:'fr.png', SEN:'sn.png',
+  IRQ:'iq.png', NOR:'no.png', ALG:'dz.png', AUT:'at.png', JOR:'jo.png', GHA:'gh.png', PAN:'pa.png',
+  ENG:'gb-eng.png', CRO:'hr.png', POR:'pt.png', COD:'cd.png', UZB:'uz.png', COL:'co.png'
+}
+
+const flagImg = (code, className = 'flag-thumb') => {
+  const file = flagFiles[code]
+  if (!file) return `<span class="${className} flag-placeholder"></span>`
+  return `<img class="${className}" src="/flags/${file}" alt="${escapeHtml(code)}" loading="lazy">`
 }
 
 const isAdmin = () => ADMIN_EMAILS.includes(state.user?.email) || state.profile?.role === 'admin'
@@ -103,10 +116,13 @@ function showMessage(message, { title = 'Aviso', tone = 'info' } = {}) {
     root.innerHTML = `
       <div class="modal-backdrop show message-backdrop" onclick="if(event.target.classList.contains('message-backdrop')) window.appActions.closeMessageModal()">
         <div class="message-modal ${tone}">
+          <div class="message-topline"></div>
           <div class="message-icon">${tone === 'success' ? '✓' : tone === 'error' ? '!' : 'i'}</div>
-          <h2>${escapeHtml(title)}</h2>
-          <p>${escapeHtml(message)}</p>
-          <button class="pill-btn primary" onclick="window.appActions.closeMessageModal()">Aceptar</button>
+          <div class="message-copy">
+            <h2>${escapeHtml(title)}</h2>
+            <p>${escapeHtml(message)}</p>
+          </div>
+          <button class="pill-btn primary message-action" onclick="window.appActions.closeMessageModal()">Aceptar</button>
         </div>
       </div>`
   })
@@ -205,7 +221,10 @@ function minPrice(matchId) {
 
 function setView(v) {
   state.view = v
-  state.selectedMatch = null
+  if (v !== 'match') {
+    state.selectedMatch = null
+    state.selectedMatchId = null
+  }
   render()
 }
 
@@ -239,7 +258,7 @@ function nav() {
 }
 
 function home() {
-  const phases = [...new Set(state.matches.map(m => m.phase || 'groups'))]
+  const phases = [...new Set(state.matches.map(m => normalizedPhase(m.phase || 'groups')))].sort((a,b) => phaseRank(a) - phaseRank(b))
   const venues = [...new Set(state.matches.map(m => `${m.city || ''} - ${m.stadium || ''}`))]
   return `
   <div class="container">
@@ -271,13 +290,13 @@ function matchesHtml(matches) {
   if (!matches.length) return `<div class="empty">No hay partidos cargados todavía.</div>`
   const grouped = {}
   matches.forEach(m => {
-    const key = m.phase || 'groups'
+    const key = normalizedPhase(m.phase || 'groups')
     if (!grouped[key]) grouped[key] = []
     grouped[key].push(m)
   })
-  return Object.entries(grouped).map(([phase, arr]) => `
+  return Object.entries(grouped).sort(([a], [b]) => phaseRank(a) - phaseRank(b)).map(([phase, arr]) => `
     <section class="phase-section">
-      <div class="phase-title"><h2>${phaseLabels[phase] || phase}</h2><span class="badge">${arr.length} partidos</span></div>
+      <div class="phase-title"><h2>${phaseLabels[phase] || phase}</h2><span class="badge phase-badge">${arr.length} partidos</span></div>
       <div class="match-grid">
         ${arr.map(matchCard).join('')}
       </div>
@@ -291,7 +310,11 @@ function matchCard(m) {
   <article class="match-card">
     <div class="match-number">${m.match_number || m.id}</div>
     <div class="match-info">
-      <h3>${flag(m.home_code)} ${m.home_code || m.home_team} <br/>vs ${flag(m.away_code)} ${m.away_code || m.away_team}</h3>
+      <h3 class="teams-line">
+        <span class="team-chip">${flagImg(m.home_code)}<span>${m.home_code || m.home_team}</span></span>
+        <span class="vs-text">vs</span>
+        <span class="team-chip">${flagImg(m.away_code)}<span>${m.away_code || m.away_team}</span></span>
+      </h3>
       <div class="meta">${m.group_name || phaseLabels[m.phase] || ''}</div>
       <div class="meta">📍 ${m.city || ''} - ${m.stadium || ''}</div>
       <div class="meta">🗓️ ${fmtDate(m.match_date)}</div>
@@ -330,24 +353,50 @@ function authView() {
 }
 
 function matchDetail() {
-  const m = state.selectedMatch
+  const m = state.matches.find(match => String(match.id) === String(state.selectedMatchId)) || state.selectedMatch
+  if (!m) return `<div class="container"><div class="empty">Seleccioná un partido para ver el detalle.</div></div>`
   const listings = state.listings.filter(l => Number(l.match_id) === Number(m.id) && l.status === 'active')
   const sale = listings.filter(l=>l.type !== 'exchange')
   const exch = listings.filter(l=>l.type === 'exchange')
+  const tabs = state.openMatchTabs.map(id => state.matches.find(match => String(match.id) === String(id))).filter(Boolean)
   return `
   <div class="container">
-    <button class="secondary-btn" onclick="window.appActions.setView('home')">← Volver</button>
-    <br><br>
-    <div class="panel">
-      <div class="match-card" style="box-shadow:none">
-        <div class="match-number">${m.match_number}</div>
-        <div class="match-info">
-          <h3>${flag(m.home_code)} ${m.home_team || m.home_code} vs ${flag(m.away_code)} ${m.away_team || m.away_code}</h3>
-          <div class="meta">${m.group_name || phaseLabels[m.phase] || ''}</div>
-          <div class="meta">📍 ${m.city} - ${m.stadium}</div>
-          <div class="meta">🗓️ ${fmtDate(m.match_date)}</div>
+    <div class="match-workspace">
+      <div class="match-toolbar">
+        <button class="secondary-btn" onclick="window.appActions.setView('home')">← Volver</button>
+        <div class="match-tabs" role="tablist">
+          ${tabs.map(tab => `
+            <button class="match-tab ${String(tab.id)===String(m.id)?'active':''}" onclick="window.appActions.switchMatchTab('${tab.id}')">
+              ${flagImg(tab.home_code, 'flag-mini')}<span>#${tab.match_number} ${tab.home_code} vs ${tab.away_code}</span>${flagImg(tab.away_code, 'flag-mini')}
+              <span class="tab-close" onclick="event.stopPropagation(); window.appActions.closeMatchTab('${tab.id}')">×</span>
+            </button>
+          `).join('')}
         </div>
       </div>
+      <div class="match-detail-panel">
+        <div class="ticket-match-hero">
+          <div class="team-large">
+            ${flagImg(m.home_code, 'flag-large')}
+            <h2>${m.home_team || m.home_code}</h2>
+            <span>${m.home_code || ''}</span>
+          </div>
+          <div class="match-center">
+            <div class="match-number">${m.match_number}</div>
+            <strong>vs</strong>
+            <p>${m.group_name || phaseLabels[m.phase] || ''}</p>
+          </div>
+          <div class="team-large">
+            ${flagImg(m.away_code, 'flag-large')}
+            <h2>${m.away_team || m.away_code}</h2>
+            <span>${m.away_code || ''}</span>
+          </div>
+        </div>
+        <div class="match-event-meta">
+          <span>📍 ${m.city} - ${m.stadium}</span>
+          <span>🗓️ ${fmtDate(m.match_date)}</span>
+        </div>
+      </div>
+    </div>
     </div>
     <br>
     <div class="grid-2">
@@ -568,15 +617,38 @@ window.appActions = {
     const filtered = state.matches.filter(m => {
       const text = `${m.home_team} ${m.away_team} ${m.home_code} ${m.away_code} ${m.city} ${m.stadium}`.toLowerCase()
       return (!q || text.includes(q)) &&
-        (!phase || m.phase === phase) &&
+        (!phase || normalizedPhase(m.phase) === phase) &&
         (!venue || `${m.city || ''} - ${m.stadium || ''}` === venue) &&
         (!country || m.home_code === country || m.away_code === country)
     })
     document.getElementById('matchesWrap').innerHTML = matchesHtml(filtered)
   },
   openMatch(id){
+    if (!state.openMatchTabs.some(tabId => String(tabId) === String(id))) state.openMatchTabs.push(id)
+    state.selectedMatchId = id
     state.selectedMatch = state.matches.find(m=>String(m.id)===String(id))
     state.view='match'
+    render()
+  },
+  switchMatchTab(id){
+    state.selectedMatchId = id
+    state.selectedMatch = state.matches.find(m=>String(m.id)===String(id))
+    state.view = 'match'
+    render()
+  },
+  closeMatchTab(id){
+    state.openMatchTabs = state.openMatchTabs.filter(tabId => String(tabId) !== String(id))
+    if (String(state.selectedMatchId) === String(id)) {
+      const nextId = state.openMatchTabs[state.openMatchTabs.length - 1]
+      if (nextId) {
+        state.selectedMatchId = nextId
+        state.selectedMatch = state.matches.find(m=>String(m.id)===String(nextId))
+      } else {
+        state.selectedMatchId = null
+        state.selectedMatch = null
+        state.view = 'home'
+      }
+    }
     render()
   },
   toggleExchangeFields(){
