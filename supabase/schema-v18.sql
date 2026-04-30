@@ -98,6 +98,9 @@ create table if not exists messages (
   order_id uuid,
   sender_id uuid,
   text text,
+  attachment_path text,
+  attachment_name text,
+  attachment_type text,
   created_at timestamp default now()
 );
 
@@ -231,6 +234,9 @@ alter table orders add column if not exists created_at timestamp default now();
 alter table messages add column if not exists order_id uuid;
 alter table messages add column if not exists sender_id uuid;
 alter table messages add column if not exists text text;
+alter table messages add column if not exists attachment_path text;
+alter table messages add column if not exists attachment_name text;
+alter table messages add column if not exists attachment_type text;
 alter table messages add column if not exists created_at timestamp default now();
 
 alter table notifications add column if not exists user_id uuid;
@@ -247,6 +253,7 @@ alter table reviews add column if not exists reviewed_user_id uuid;
 alter table reviews add column if not exists rating int;
 alter table reviews add column if not exists comment text;
 alter table reviews add column if not exists created_at timestamp default now();
+create unique index if not exists reviews_one_per_user_per_order on reviews(order_id, reviewer_id, reviewed_user_id);
 
 alter table email_templates add column if not exists event_key text;
 alter table email_templates add column if not exists subject text;
@@ -289,6 +296,10 @@ insert into storage.buckets (id, name, public)
 values ('payment-proofs', 'payment-proofs', false)
 on conflict (id) do nothing;
 
+insert into storage.buckets (id, name, public)
+values ('chat-attachments', 'chat-attachments', false)
+on conflict (id) do nothing;
+
 alter table users enable row level security;
 alter table matches enable row level security;
 alter table listings enable row level security;
@@ -309,6 +320,7 @@ drop policy if exists "open reviews" on reviews;
 drop policy if exists "open email_templates" on email_templates;
 drop policy if exists "open site_settings" on site_settings;
 drop policy if exists "open payment proofs" on storage.objects;
+drop policy if exists "open chat attachments" on storage.objects;
 
 create policy "open users" on users for all using (true) with check (true);
 create policy "open matches" on matches for all using (true) with check (true);
@@ -320,6 +332,7 @@ create policy "open reviews" on reviews for all using (true) with check (true);
 create policy "open email_templates" on email_templates for all using (true) with check (true);
 create policy "open site_settings" on site_settings for all using (true) with check (true);
 create policy "open payment proofs" on storage.objects for all using (bucket_id = 'payment-proofs') with check (bucket_id = 'payment-proofs');
+create policy "open chat attachments" on storage.objects for all using (bucket_id = 'chat-attachments') with check (bucket_id = 'chat-attachments');
 
 insert into storage.buckets (id, name, public)
 values ('profile-photos', 'profile-photos', true),

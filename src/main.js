@@ -37,6 +37,11 @@ document.body.classList.toggle('dark', state.theme === 'dark')
 const ADMIN_EMAILS = ['admin@demo.com', 'juanmaotero1999@gmail.com']
 const PLATFORM_TRANSFER_EMAIL = 'transferencias@entradas-fifa.store'
 const APP_NAME = 'Entradas Mundial 2026'
+const seenMessagesStorageKey = () => `seenMessages:${state.user?.id || 'guest'}`
+const readSeenMessages = () => {
+  try { return JSON.parse(localStorage.getItem(seenMessagesStorageKey()) || '{}') } catch (_) { return {} }
+}
+const writeSeenMessages = (value) => localStorage.setItem(seenMessagesStorageKey(), JSON.stringify(value || {}))
 const viewRoutes = {
   home: '/comprar',
   auth: '/ingresar',
@@ -207,6 +212,27 @@ const sellerReputation = (sellerId) => {
 }
 
 const sellerReviews = (sellerId) => state.reviews.filter(r => r.reviewed_user_id === sellerId)
+const messageSortValue = (msg = {}) => new Date(msg.created_at || 0).getTime() || 0
+const latestMessageValue = (messages = []) => messages.reduce((max, msg) => Math.max(max, messageSortValue(msg)), 0)
+const orderUnreadMessages = (orderId) => {
+  if (!orderId) return 0
+  const seen = Number(readSeenMessages()[orderId] || 0)
+  return state.messages.filter(msg => msg.order_id === orderId && messageSortValue(msg) > seen && msg.sender_id !== state.user?.id).length
+}
+const markOrderMessagesSeen = (orderId, messages = state.messages) => {
+  if (!orderId) return
+  const latest = latestMessageValue(messages)
+  if (!latest) return
+  const seen = readSeenMessages()
+  seen[orderId] = Math.max(Number(seen[orderId] || 0), latest)
+  writeSeenMessages(seen)
+}
+const replaceOrderMessages = (orderId, messages = []) => {
+  state.messages = [
+    ...state.messages.filter(msg => msg.order_id !== orderId),
+    ...messages
+  ].sort((a, b) => messageSortValue(a) - messageSortValue(b))
+}
 const avatarHtml = (userId, className = 'seller-avatar') => {
   const u = userProfile(userId)
   const initial = escapeHtml((u.first_name || u.email || 'U').slice(0,1).toUpperCase())
@@ -473,15 +499,21 @@ async function loadAll() {
     const ordersQuery = isAdmin()
       ? supabase.from('orders').select('*').order('created_at', { ascending:false })
       : supabase.from('orders').select('*').or(`buyer_id.eq.${state.user.id},seller_id.eq.${state.user.id}`).order('created_at', { ascending:false })
-    const [orders, notifs] = await Promise.all([
+    const [orders, notifs, orderMessages] = await Promise.all([
       ordersQuery,
-      supabase.from('notifications').select('*').eq('user_id', state.user.id).order('created_at', { ascending:false })
+      supabase.from('notifications').select('*').eq('user_id', state.user.id).order('created_at', { ascending:false }),
+      supabase.from('messages').select('*').order('created_at', { ascending:true })
     ])
     state.orders = orders.data || []
     state.notifications = notifs.data || []
+    if (!orderMessages.error) {
+      const ids = new Set(state.orders.map(order => order.id))
+      state.messages = (orderMessages.data || []).filter(msg => ids.has(msg.order_id))
+    }
   } else {
     state.orders = []
     state.notifications = []
+    state.messages = []
   }
 }
 
@@ -925,8 +957,9 @@ function myView() {
 function orderCard(o) {
   const l = state.listings.find(x=>x.id===o.listing_id)
   const m = state.matches.find(x=>Number(x.id)===Number(l?.match_id))
+  const unread = orderUnreadMessages(o.id)
   return `<div class="item">
-    <strong>Operación #${String(o.id).slice(0,8)} · ${statusLabel[o.status] || o.status}</strong>
+    <strong>Operación #${String(o.id).slice(0,8)} · ${statusLabel[o.status] || o.status} ${unread ? `<span class="message-alert">● ${unread} mensaje${unread === 1 ? '' : 's'} nuevo${unread === 1 ? '' : 's'}</span>` : ''}</strong>
     <p class="meta">${m?`#${m.match_number} ${m.home_code} vs ${m.away_code}`:'Partido'} · Cantidad ${o.quantity || 1} · Total ${money(o.total || l?.price || 0, l?.currency || 'ARS')}</p>
     <button class="secondary-btn" onclick="window.appActions.openOrder('${o.id}')">Ver detalle / chat</button>
   </div>`
@@ -1090,8 +1123,9 @@ async function openOrder(id) {
   const order = fresh.data || localOrder
   state.selectedOrder = order
   const { data } = await supabase.from('messages').select('*').eq('order_id', id).order('created_at', { ascending:true })
-  state.messages = data || []
-  renderModal()
+  replaceOrderMessages(id, data || [])
+  markOrderMessagesSeen(id, data || [])
+  renderModal({ autoChatBottom:true })
   startOperationAutoRefresh()
 }
 
@@ -1103,13 +1137,18 @@ function startOperationAutoRefresh() {
     if (!modal?.querySelector('.operation-modal')) return
     const chatInput = document.getElementById('chatText')
     if (document.activeElement === chatInput) return
+    const previousOrderMessages = state.messages.filter(msg => msg.order_id === state.selectedOrder.id)
+    const previousLatest = latestMessageValue(previousOrderMessages)
     const [orderResult, messagesResult] = await Promise.all([
       supabase.from('orders').select('*').eq('id', state.selectedOrder.id).maybeSingle(),
       supabase.from('messages').select('*').eq('order_id', state.selectedOrder.id).order('created_at', { ascending:true })
     ])
     if (orderResult.data) state.selectedOrder = orderResult.data
-    if (!messagesResult.error) state.messages = messagesResult.data || []
-    renderModal({ preserveScroll:true })
+    const nextMessages = messagesResult.error ? previousOrderMessages : (messagesResult.data || [])
+    const hasNewMessage = latestMessageValue(nextMessages) > previousLatest
+    replaceOrderMessages(state.selectedOrder.id, nextMessages)
+    if (hasNewMessage) markOrderMessagesSeen(state.selectedOrder.id, nextMessages)
+    renderModal({ preserveScroll:!hasNewMessage, autoChatBottom:hasNewMessage })
   }, 5000)
 }
 
@@ -1220,7 +1259,9 @@ function renderModal(options = {}) {
     <div class="operation-timeline">${timeline.map(timelineStepHtml).join('')}</div>
     ${roleActionsHtml(o, l, isExchange)}`
   const reviewTarget = state.user?.id === o.seller_id ? o.buyer_id : o.seller_id
-  const canReview = state.user && !isAdmin() && o.status === 'completed' && reviewTarget
+  const orderReviews = state.reviews.filter(r => r.order_id === o.id)
+  const myReview = orderReviews.find(r => r.reviewer_id === state.user?.id)
+  const canReview = state.user && !isAdmin() && o.status === 'completed' && reviewTarget && !myReview
   const reviewBox = canReview ? `
     <div class="panel" style="box-shadow:none;margin-top:14px">
       <h3>Dejar reseña</h3>
@@ -1231,6 +1272,19 @@ function renderModal(options = {}) {
       </div>
       <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.submitReview('${o.id}','${reviewTarget}')">Enviar reseña</button></div>
     </div>` : ''
+  const fixedReviewBox = myReview ? `
+    <div class="review-text fixed-review">
+      <strong>Tu reseña quedó publicada · ${starsHtml(myReview.rating)}</strong>
+      <p>${escapeHtml(myReview.comment || 'Sin comentario')}</p>
+    </div>` : ''
+  const operationReviewsHtml = orderReviews.length ? `
+    <div class="panel" style="box-shadow:none;margin-top:14px">
+      <h3>Reseñas de la operación</h3>
+      <div class="seller-reviews">
+        ${orderReviews.map(r=>`<div class="review-text"><strong>${escapeHtml(userName(r.reviewer_id))} → ${escapeHtml(userName(r.reviewed_user_id))} · ${starsHtml(r.rating)}</strong><p>${escapeHtml(r.comment || 'Sin comentario')}</p></div>`).join('')}
+      </div>
+    </div>` : ''
+  const chatMessages = state.messages.filter(msg => msg.order_id === o.id)
   const html = `
     <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeModal()">
       <div class="modal operation-modal">
@@ -1250,11 +1304,17 @@ function renderModal(options = {}) {
               <p><strong>Estado:</strong> <span class="badge warn">${statusLabel[o.status] || o.status}</span></p>
               ${!isExchange && (o.buyer_payment_proof_path || o.buyer_payment_proof_name) ? `<p><strong>Comprobante:</strong> ${escapeHtml(o.buyer_payment_proof_name || o.buyer_payment_proof_path)} ${o.buyer_payment_proof_path ? `<button class="link-btn inline-link" onclick="window.appActions.viewPaymentProof('${escapeHtml(o.buyer_payment_proof_path)}')">Ver archivo</button>` : ''}</p>` : ''}
               ${timelineHtml}
+              ${operationReviewsHtml}
+              ${fixedReviewBox}
               ${reviewBox}
             </div>
             <div class="panel" style="box-shadow:none"><h3>Chat</h3>
-              <div class="chat-box">${state.messages.map(msg=>`<div class="msg ${msg.sender_id===state.user?.id?'me':(!msg.sender_id?'system':'')}">${escapeHtml(msg.text)}<br><small>${!msg.sender_id ? 'Administrador automático · ' : ''}${fmtDate(msg.created_at)}</small></div>`).join('')}</div>
-              <div class="footer-actions"><input class="input" id="chatText" placeholder="Escribir mensaje..." /><button class="pill-btn primary" onclick="window.appActions.sendMessage('${o.id}')">Enviar</button></div>
+              <div class="chat-box">${chatMessages.map(msg=>`<div class="msg ${msg.sender_id===state.user?.id?'me':(!msg.sender_id?'system':'')}">${escapeHtml(msg.text || '')}${msg.attachment_path ? `<div class="message-attachment"><button class="link-btn inline-link" onclick="window.appActions.viewChatAttachment('${escapeHtml(msg.attachment_path)}')">📎 ${escapeHtml(msg.attachment_name || 'Archivo adjunto')}</button></div>` : ''}<br><small>${!msg.sender_id ? 'Administrador automático · ' : ''}${fmtDate(msg.created_at)}</small></div>`).join('')}</div>
+              <div class="chat-composer">
+                <input class="input" id="chatText" placeholder="Escribir mensaje..." onkeydown="window.appActions.handleChatKey(event, '${o.id}')" />
+                <label class="secondary-btn attach-btn">Adjuntar<input type="file" accept="image/*,.pdf" onchange="window.appActions.uploadChatAttachment('${o.id}', this.files?.[0])"></label>
+                <button class="pill-btn primary" onclick="window.appActions.sendMessage('${o.id}')">Enviar</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1273,6 +1333,11 @@ function renderModal(options = {}) {
       const nextChat = document.querySelector('#modalRoot .chat-box')
       if (nextModal) nextModal.scrollTop = scrollState.modalTop
       if (nextChat) nextChat.scrollTop = scrollState.chatTop
+    })
+  } else if (options.autoChatBottom) {
+    requestAnimationFrame(() => {
+      const nextChat = document.querySelector('#modalRoot .chat-box')
+      if (nextChat) nextChat.scrollTop = nextChat.scrollHeight
     })
   }
 }
@@ -1777,6 +1842,37 @@ window.appActions = {
     await supabase.from('messages').insert({ order_id:orderId, sender_id:state.user.id, text })
     await openOrder(orderId)
   },
+  handleChatKey(event, orderId){
+    if (event.key !== 'Enter' || event.shiftKey) return
+    event.preventDefault()
+    this.sendMessage(orderId)
+  },
+  async uploadChatAttachment(orderId, file){
+    if (!file || !state.user) return
+    if (file.size > 10 * 1024 * 1024) return showMessage('El archivo no puede superar los 10 MB.', { title: 'Archivo demasiado grande', tone: 'error' })
+    showLoading('Subiendo archivo...')
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'bin'
+    const path = `${orderId}/${state.user.id}-${Date.now()}.${ext}`
+    const upload = await supabase.storage.from('chat-attachments').upload(path, file, { upsert:false, contentType:file.type })
+    if (upload.error) {
+      hideLoading()
+      return showMessage(upload.error.message, { title: 'No se pudo subir el archivo', tone: 'error' })
+    }
+    const text = document.getElementById('chatText')?.value.trim() || ''
+    let insert = await supabase.from('messages').insert({ order_id:orderId, sender_id:state.user.id, text, attachment_path:path, attachment_name:file.name, attachment_type:file.type })
+    if (insert.error && /schema cache|column|attachment_/i.test(insert.error.message || '')) {
+      insert = await supabase.from('messages').insert({ order_id:orderId, sender_id:state.user.id, text: text || `Archivo adjunto: ${file.name}` })
+    }
+    hideLoading()
+    if (insert.error) return showMessage(insert.error.message, { title: 'No se pudo enviar el archivo', tone: 'error' })
+    await openOrder(orderId)
+  },
+  async viewChatAttachment(path){
+    if (!path) return
+    const { data, error } = await supabase.storage.from('chat-attachments').createSignedUrl(path, 60 * 5)
+    if (error) return showMessage(error.message, { title: 'No se pudo abrir el archivo', tone: 'error' })
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+  },
   async updateOrder(id,status){
     const order = state.orders.find(o => o.id === id) || (await supabase.from('orders').select('*').eq('id', id).maybeSingle()).data
     if (status === 'cancelled' && order && !['cancelled','completed'].includes(order.status)) {
@@ -1850,11 +1946,10 @@ window.appActions = {
     const rating = Number(document.getElementById('reviewRating')?.value || 5)
     const comment = document.getElementById('reviewComment')?.value.trim() || ''
     const { data: existingReview } = await supabase.from('reviews').select('id').eq('order_id', orderId).eq('reviewer_id', state.user.id).eq('reviewed_user_id', reviewedUserId).maybeSingle()
-    const request = existingReview?.id
-      ? supabase.from('reviews').update({ rating, comment }).eq('id', existingReview.id)
-      : supabase.from('reviews').insert({ order_id: orderId, reviewer_id: state.user.id, reviewed_user_id: reviewedUserId, rating, comment })
-    const { error } = await request
+    if (existingReview?.id) return showMessage('Ya dejaste tu reseña para esta operación. Para mantener la confianza, no se puede editar ni enviar otra.', { title: 'Reseña ya enviada', tone: 'info' })
+    const { error } = await supabase.from('reviews').insert({ order_id: orderId, reviewer_id: state.user.id, reviewed_user_id: reviewedUserId, rating, comment })
     if (error) return showMessage(error.message, { title: 'No se pudo guardar la reseña', tone: 'error' })
+    await addSystemMessage(orderId, `${userName(state.user.id)} dejó una reseña para ${userName(reviewedUserId)}. Ya quedó fijada en esta operación.`)
     const existing = sellerReviews(reviewedUserId).filter(r => !(r.order_id === orderId && r.reviewer_id === state.user.id))
     const nextReviews = [...existing, { reviewed_user_id: reviewedUserId, rating }]
     const avg = nextReviews.reduce((sum, r) => sum + Number(r.rating || 0), 0) / nextReviews.length
