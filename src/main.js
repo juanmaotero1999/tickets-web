@@ -34,6 +34,7 @@ let state = {
 document.body.classList.toggle('dark', state.theme === 'dark')
 
 const ADMIN_EMAILS = ['admin@demo.com', 'juanmaotero1999@gmail.com']
+const PLATFORM_TRANSFER_EMAIL = 'transferencias@entradas-fifa.store'
 
 function missingConfigView() {
   app.innerHTML = `
@@ -466,11 +467,16 @@ function hasActiveOffers(matchId) {
   return state.listings.some(l => Number(l.match_id) === Number(matchId) && l.status === 'active' && Number(l.quantity || 0) > 0)
 }
 
-function setView(v) {
+async function setView(v) {
   state.view = v
   if (v !== 'match') {
     state.selectedMatch = null
     state.selectedMatchId = null
+  }
+  if (!supabaseConfigMissing) {
+    showLoading('Actualizando información...')
+    await loadAll()
+    hideLoading()
   }
   render()
 }
@@ -1056,6 +1062,83 @@ async function openOrder(id) {
   renderModal()
 }
 
+function timelineStepHtml(step) {
+  return `<div class="timeline-step ${step.done ? 'done' : ''} ${step.active ? 'active' : ''}">
+    <span class="timeline-dot">${step.done ? '✓' : ''}</span>
+    <div>
+      <strong>${escapeHtml(step.title)}</strong>
+      <p>${escapeHtml(step.copy)}</p>
+      ${step.meta ? `<em>${escapeHtml(step.meta)}</em>` : ''}
+    </div>
+  </div>`
+}
+
+function saleTimeline(o, l, seller, buyer) {
+  const sellerSent = ['sent','received_by_admin','released'].includes(o.seller_delivery_status)
+  const adminReceived = o.admin_seller_delivery_status === 'received_by_admin'
+  const buyerPaid = o.buyer_payment_status === 'sent'
+  const sellerConfirmed = o.seller_payment_status === 'received' || ['payment_confirmed','completed'].includes(o.status)
+  const released = o.buyer_delivery_status === 'released' || o.status === 'completed'
+  return [
+    { title:'1. Vendedor envía entradas', copy:`${seller} debe transferir las entradas a la cuenta de la plataforma.`, meta:`Cuenta: ${PLATFORM_TRANSFER_EMAIL}`, done:sellerSent, active:!sellerSent },
+    { title:'2. Verificación de entradas', copy:'El administrador revisa que las entradas recibidas sean correctas antes de habilitar el pago.', done:adminReceived, active:sellerSent && !adminReceived },
+    { title:'3. Comprador transfiere al vendedor', copy:`${buyer} puede pagar recién cuando la plataforma confirma que tiene las entradas.`, meta:`Método del vendedor: ${l.seller_payment_method || '-'} ${l.seller_payment_value || ''}`.trim(), done:buyerPaid, active:adminReceived && !buyerPaid },
+    { title:'4. Vendedor confirma pago', copy:`${seller} confirma cuando el dinero impactó correctamente.`, done:sellerConfirmed, active:buyerPaid && !sellerConfirmed },
+    { title:'5. Admin libera entradas', copy:'La plataforma libera las entradas al comprador y finaliza la operación.', done:released, active:sellerConfirmed && !released }
+  ]
+}
+
+function exchangeTimeline(o, seller, buyer) {
+  const sellerSent = ['sent','released'].includes(o.seller_delivery_status) || o.admin_seller_delivery_status === 'received_by_admin'
+  const buyerSent = ['sent','released'].includes(o.buyer_delivery_status) || o.admin_buyer_delivery_status === 'received_by_admin'
+  const adminSeller = o.admin_seller_delivery_status === 'received_by_admin'
+  const adminBuyer = o.admin_buyer_delivery_status === 'received_by_admin'
+  const completed = o.status === 'completed'
+  return [
+    { title:`1. ${seller} envía sus entradas`, copy:'Debe transferir sus entradas a la cuenta de la plataforma.', meta:`Cuenta: ${PLATFORM_TRANSFER_EMAIL}`, done:sellerSent, active:!sellerSent },
+    { title:`2. ${buyer} envía sus entradas`, copy:'Debe transferir sus entradas a la misma cuenta de la plataforma.', meta:`Cuenta: ${PLATFORM_TRANSFER_EMAIL}`, done:buyerSent, active:sellerSent && !buyerSent },
+    { title:'3. Admin verifica ambos lotes', copy:'La plataforma confirma que recibió correctamente las entradas de las dos partes.', done:adminSeller && adminBuyer, active:(sellerSent || buyerSent) && !(adminSeller && adminBuyer) },
+    { title:'4. Admin libera el intercambio', copy:'Cuando ambos lotes están verificados, cada usuario recibe las entradas acordadas.', done:completed, active:adminSeller && adminBuyer && !completed }
+  ]
+}
+
+function roleActionsHtml(o, l, isExchange) {
+  const isSeller = state.user?.id === o.seller_id
+  const isBuyer = state.user?.id === o.buyer_id
+  if (isAdmin()) {
+    return `<div class="footer-actions">
+      ${!isExchange ? `
+        <button class="pill-btn primary" ${o.seller_delivery_status === 'sent' && o.admin_seller_delivery_status !== 'received_by_admin' ? '' : 'disabled'} onclick="window.appActions.updateOrderFlow('${o.id}','admin_seller_delivery_status','received_by_admin','awaiting_buyer_payment')">Entradas recibidas</button>
+        <button class="pill-btn primary" ${o.seller_payment_status === 'received' && o.buyer_delivery_status !== 'released' ? '' : 'disabled'} onclick="window.appActions.updateOrderFlow('${o.id}','buyer_delivery_status','released','completed')">Liberar entradas al comprador</button>
+      ` : `
+        <button class="pill-btn primary" ${o.seller_delivery_status === 'sent' && o.admin_seller_delivery_status !== 'received_by_admin' ? '' : 'disabled'} onclick="window.appActions.updateOrderFlow('${o.id}','admin_seller_delivery_status','received_by_admin','exchange_in_progress')">Recibí entradas de usuario 1</button>
+        <button class="pill-btn primary" ${o.buyer_delivery_status === 'sent' && o.admin_buyer_delivery_status !== 'received_by_admin' ? '' : 'disabled'} onclick="window.appActions.updateOrderFlow('${o.id}','admin_buyer_delivery_status','received_by_admin','exchange_ready_to_release')">Recibí entradas de usuario 2</button>
+        <button class="pill-btn primary" ${o.admin_seller_delivery_status === 'received_by_admin' && o.admin_buyer_delivery_status === 'received_by_admin' && o.status !== 'completed' ? '' : 'disabled'} onclick="window.appActions.completeExchange('${o.id}')">Liberar ambos lotes</button>
+      `}
+      <button class="secondary-btn" onclick="window.appActions.updateOrder('${o.id}','cancelled')">Cancelar y devolver stock</button>
+      <button class="pill-btn danger" onclick="window.appActions.updateOrder('${o.id}','issue')">Marcar problema</button>
+    </div>`
+  }
+  if (isExchange) {
+    return `<div class="footer-actions">
+      ${isSeller ? `<button class="pill-btn primary" ${o.seller_delivery_status === 'pending' ? '' : 'disabled'} onclick="window.appActions.updateOrderFlow('${o.id}','seller_delivery_status','sent','exchange_in_progress')">Ya envié mis entradas</button>` : ''}
+      ${isBuyer ? `<button class="pill-btn primary" ${o.buyer_delivery_status === 'pending' ? '' : 'disabled'} onclick="window.appActions.updateOrderFlow('${o.id}','buyer_delivery_status','sent','exchange_in_progress')">Ya envié mis entradas</button>` : ''}
+    </div>`
+  }
+  return `<div class="footer-actions">
+    ${isSeller ? `<button class="pill-btn primary" ${o.seller_delivery_status === 'pending' ? '' : 'disabled'} onclick="window.appActions.updateOrderFlow('${o.id}','seller_delivery_status','sent','seller_ticket_sent')">Ya envié las entradas</button>` : ''}
+    ${isBuyer ? `<button class="pill-btn primary" ${o.admin_seller_delivery_status === 'received_by_admin' && o.buyer_payment_status !== 'sent' ? '' : 'disabled'} onclick="window.appActions.openPaymentProofModal('${o.id}')">Ya transferí el dinero</button>` : ''}
+    ${isSeller ? `<button class="pill-btn primary" ${o.buyer_payment_status === 'sent' && o.seller_payment_status !== 'received' ? '' : 'disabled'} onclick="window.appActions.updateOrderFlow('${o.id}','seller_payment_status','received','payment_confirmed')">Confirmo pago recibido</button>` : ''}
+  </div>`
+}
+
+async function addSystemMessage(orderId, text) {
+  if (!orderId || !text) return
+  try {
+    await supabase.from('messages').insert({ order_id:orderId, sender_id:null, text })
+  } catch (_) {}
+}
+
 function renderModal() {
   const o = state.selectedOrder
   if (!o) return
@@ -1066,32 +1149,14 @@ function renderModal() {
   const buyer = userName(o.buyer_id)
   const sellerTicket = listingTicketSummary(l)
   const buyerTicket = exchangeWantedSummary(l)
-  const saleSteps = `
-    <div class="operation-disclaimer">${escapeHtml(siteSetting('seller_disclaimer', 'Flujo de venta: 1. El vendedor envía las entradas al admin. 2. El admin confirma recepción y avisa al comprador que puede pagar. 3. El comprador informa pago. 4. El vendedor confirma que recibió el pago. 5. El admin libera las entradas al comprador.'))}</div>
-    <div class="flow-grid">
-      <div class="flow-leg"><span>Debe enviar entradas al admin</span><strong>${escapeHtml(seller)}</strong><em>${escapeHtml(sellerTicket)} · Estado: ${deliveryLabel[o.seller_delivery_status || 'pending']}</em></div>
-      <div class="flow-leg"><span>Debe pagar al vendedor cuando el admin confirme entradas</span><strong>${escapeHtml(buyer)}</strong><em>Pago: ${paymentLabel[o.buyer_payment_status || 'pending']} · Recibe: ${deliveryLabel[o.buyer_delivery_status || 'pending']}</em></div>
-    </div>`
-  const exchangeSteps = `
-    <div class="operation-disclaimer">${escapeHtml(siteSetting('exchange_disclaimer', 'Flujo de intercambio: cada usuario envía sus entradas al admin. Cuando el admin tenga ambos lotes, libera las entradas del usuario 1 al usuario 2 y las del usuario 2 al usuario 1.'))}</div>
-    <div class="flow-grid">
-      <div class="flow-leg"><span>${escapeHtml(seller)} entrega a ${escapeHtml(buyer)}</span><strong>${escapeHtml(sellerTicket)}</strong><em>Usuario: ${deliveryLabel[o.seller_delivery_status || 'pending']} · Admin: ${deliveryLabel[o.admin_seller_delivery_status || 'pending']}</em></div>
-      <div class="flow-leg"><span>${escapeHtml(buyer)} entrega a ${escapeHtml(seller)}</span><strong>${escapeHtml(buyerTicket)}</strong><em>Usuario: ${deliveryLabel[o.buyer_delivery_status || 'pending']} · Admin: ${deliveryLabel[o.admin_buyer_delivery_status || 'pending']}</em></div>
-    </div>`
-  const userActions = !isAdmin() ? `
-    <div class="footer-actions">
-      ${!isExchange && state.user?.id === o.seller_id ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','seller_delivery_status','sent','seller_ticket_sent')">Ya envié las entradas al admin</button><button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','seller_payment_status','received','payment_confirmed')">Confirmo pago recibido</button>` : ''}
-      ${!isExchange && state.user?.id === o.buyer_id ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','buyer_payment_status','sent','buyer_payment_sent')">Ya realicé el pago</button>` : ''}
-      ${isExchange && state.user?.id === o.seller_id ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','seller_delivery_status','sent','exchange_in_progress')">Ya envié mis entradas al admin</button>` : ''}
-      ${isExchange && state.user?.id === o.buyer_id ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','buyer_delivery_status','sent','exchange_in_progress')">Ya envié mis entradas al admin</button>` : ''}
-    </div>` : ''
-  const adminActions = isAdmin() ? `
-    <div class="footer-actions">
-      ${!isExchange ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','admin_seller_delivery_status','received_by_admin','awaiting_buyer_payment')">Confirmar entradas recibidas y avisar pago</button><button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','buyer_delivery_status','released','completed')">Liberar entradas al comprador</button>` : ''}
-      ${isExchange ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','admin_seller_delivery_status','received_by_admin','exchange_in_progress')">Recibí entradas de ${escapeHtml(seller)}</button><button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','admin_buyer_delivery_status','received_by_admin','exchange_ready_to_release')">Recibí entradas de ${escapeHtml(buyer)}</button><button class="pill-btn primary" onclick="window.appActions.completeExchange('${o.id}')">Liberar ambos lotes</button>` : ''}
-      <button class="secondary-btn" onclick="window.appActions.updateOrder('${o.id}','cancelled')">Cancelar y devolver stock</button>
-      <button class="pill-btn danger" onclick="window.appActions.updateOrder('${o.id}','issue')">Marcar problema</button>
-    </div>` : ''
+  const timeline = isExchange ? exchangeTimeline(o, seller, buyer) : saleTimeline(o, l, seller, buyer)
+  const timelineHtml = `
+    <div class="operation-disclaimer">${escapeHtml(isExchange
+      ? siteSetting('exchange_disclaimer', `Ambos usuarios deben enviar sus entradas a ${PLATFORM_TRANSFER_EMAIL}. La plataforma libera el intercambio solo cuando verificó ambos lotes.`)
+      : siteSetting('seller_disclaimer', `El vendedor envía las entradas a ${PLATFORM_TRANSFER_EMAIL}. El comprador solo paga cuando el administrador confirma que las recibió.`)
+    )}</div>
+    <div class="operation-timeline">${timeline.map(timelineStepHtml).join('')}</div>
+    ${roleActionsHtml(o, l, isExchange)}`
   const reviewTarget = state.user?.id === o.seller_id ? o.buyer_id : o.seller_id
   const canReview = state.user && !isAdmin() && o.status === 'completed' && reviewTarget
   const reviewBox = canReview ? `
@@ -1121,13 +1186,12 @@ function renderModal() {
               <p><strong>Cantidad:</strong> ${o.quantity || 1}</p>
               <p><strong>Total:</strong> ${money(o.total || l.price || 0, l.currency || 'ARS')}</p>
               <p><strong>Estado:</strong> <span class="badge warn">${statusLabel[o.status] || o.status}</span></p>
-              ${isExchange ? exchangeSteps : saleSteps}
-              ${userActions}
-              ${adminActions}
+              ${!isExchange && (o.buyer_payment_proof_path || o.buyer_payment_proof_name) ? `<p><strong>Comprobante:</strong> ${escapeHtml(o.buyer_payment_proof_name || o.buyer_payment_proof_path)} ${o.buyer_payment_proof_path ? `<button class="link-btn inline-link" onclick="window.appActions.viewPaymentProof('${escapeHtml(o.buyer_payment_proof_path)}')">Ver archivo</button>` : ''}</p>` : ''}
+              ${timelineHtml}
               ${reviewBox}
             </div>
             <div class="panel" style="box-shadow:none"><h3>Chat</h3>
-              <div class="chat-box">${state.messages.map(msg=>`<div class="msg ${msg.sender_id===state.user?.id?'me':''}">${msg.text}<br><small>${fmtDate(msg.created_at)}</small></div>`).join('')}</div>
+              <div class="chat-box">${state.messages.map(msg=>`<div class="msg ${msg.sender_id===state.user?.id?'me':(!msg.sender_id?'system':'')}">${escapeHtml(msg.text)}<br><small>${!msg.sender_id ? 'Administrador automático · ' : ''}${fmtDate(msg.created_at)}</small></div>`).join('')}</div>
               <div class="footer-actions"><input class="input" id="chatText" placeholder="Escribir mensaje..." /><button class="pill-btn primary" onclick="window.appActions.sendMessage('${o.id}')">Enviar</button></div>
             </div>
           </div>
@@ -1160,9 +1224,12 @@ window.appActions = {
   setView,
   setAuthMode(mode){ state.authMode = mode; render() },
   toggleTheme: setTheme,
-  setAdminSection(section){
+  async setAdminSection(section){
     state.adminSection = section
     state.adminMenuOpen = true
+    showLoading('Actualizando módulo...')
+    await loadAll()
+    hideLoading()
     render()
   },
   toggleAdminMenu(){
@@ -1443,21 +1510,26 @@ window.appActions = {
     const qty = Number(await askQuantity(l.quantity))
     if (!qty) return
     if (qty > Number(l.quantity)) return showMessage('No hay suficientes entradas disponibles.', { title: 'Cantidad no disponible', tone: 'error' })
+    showLoading('Reservando entradas...')
     const { data, error } = await insertOrderWithFallback({
       listing_id: l.id, buyer_id: state.user.id, seller_id: l.seller_id, quantity: qty, total: qty * Number(l.price || 0), status:'pending_payment',
       seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', buyer_payment_status:'pending', seller_payment_status:'pending'
     })
-    if (error) { await showMessage(error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
+    if (error) { hideLoading(); await showMessage(error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
     await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
+    await addSystemMessage(data.id, `Recordatorio de seguridad: no transfieras dinero hasta que el administrador confirme en esta operación que recibió las entradas. El vendedor debe enviar las entradas a ${PLATFORM_TRANSFER_EMAIL}.`)
     await notifyUsers([
       { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente', action:{ view:'order', id:data.id, template:'venta_pendiente', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } },
       { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada', action:{ view:'order', id:data.id, template:'compra_iniciada', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } }
     ])
+    hideLoading()
     await showMessage(siteSetting('buyer_disclaimer', 'Seguí los pasos del proceso seguro dentro del detalle de la operación. Usá el chat para coordinar y no hagas pagos ni entregas por fuera de la plataforma.'), { title: 'Compra iniciada', tone: 'success' })
+    showLoading('Abriendo detalle de la compra...')
     await loadAll()
     state.view='my'
     render()
     await openOrder(data.id)
+    hideLoading()
   },
   async startExchange(listingId){
     if (!state.user) { state.view='auth'; render(); return }
@@ -1470,6 +1542,7 @@ window.appActions = {
     })
     if (error) await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
     else {
+      await addSystemMessage(data.id, `Recordatorio de seguridad: ambas partes deben enviar sus entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador verificará ambos lotes antes de liberar el intercambio.`)
       await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio', { view:'order', id:data.id, template:'intercambio_oferta', vars:{ partido:listingTicketSummary(l), comprador:userName(state.user.id), vendedor:userName(l.seller_id) } })
       await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; render()
     }
@@ -1552,6 +1625,71 @@ window.appActions = {
     await showMessage(kind === 'avatar' ? 'Tu foto de perfil fue actualizada.' : (state.profile?.identity_selfie_path ? 'Documento recibido. Tu verificación quedó pendiente de revisión.' : 'Documento recibido. Para enviar la verificación, completá también la prueba de vida.'), { title: kind === 'avatar' ? 'Foto actualizada' : 'Documento recibido', tone: 'success' })
     render()
   },
+  openPaymentProofModal(orderId){
+    const o = state.orders.find(order => order.id === orderId) || state.selectedOrder
+    const l = state.listings.find(x=>x.id===o?.listing_id) || {}
+    let modal = document.getElementById('modalRoot')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'modalRoot'
+      document.body.appendChild(modal)
+    }
+    modal.innerHTML = `
+      <div class="modal-backdrop show">
+        <div class="modal upload-modal">
+          <div class="modal-header"><h2>Informar transferencia</h2><button class="secondary-btn" onclick="window.appActions.openOrder('${orderId}')">Volver</button></div>
+          <div class="modal-body">
+            <div class="upload-disclaimer">
+              <strong>Subí el comprobante solo después de transferir</strong>
+              <p>Verificá que el administrador ya confirmó las entradas. Transferí al método informado por el vendedor y subí una imagen o PDF del comprobante para que comprador, vendedor y admin lo puedan revisar.</p>
+              <p><strong>Datos del vendedor:</strong> ${escapeHtml(l.seller_payment_method || '-')} ${escapeHtml(l.seller_payment_value || '')}</p>
+            </div>
+            <label class="dropzone" ondragover="event.preventDefault()" ondrop="window.appActions.handlePaymentProofDrop('${orderId}', event)">
+              <input id="paymentProofInput" type="file" accept="image/*,.pdf" onchange="window.appActions.uploadPaymentProof('${orderId}', this.files?.[0])">
+              <strong>Arrastrá el comprobante acá</strong>
+              <span>o hacé click para seleccionarlo</span>
+            </label>
+          </div>
+        </div>
+      </div>`
+  },
+  handlePaymentProofDrop(orderId, event){
+    event.preventDefault()
+    const file = event.dataTransfer?.files?.[0]
+    if (file) this.uploadPaymentProof(orderId, file)
+  },
+  async uploadPaymentProof(orderId, file){
+    if (!file || !state.user) return
+    if (file.size > 8 * 1024 * 1024) return showMessage('El comprobante no puede superar los 8 MB.', { title: 'Archivo demasiado grande', tone: 'error' })
+    showLoading('Subiendo comprobante...')
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+    const path = `${orderId}/${state.user.id}-${Date.now()}.${ext}`
+    const upload = await supabase.storage.from('payment-proofs').upload(path, file, { upsert:false, contentType:file.type })
+    if (upload.error) {
+      hideLoading()
+      return showMessage(upload.error.message, { title: 'No se pudo subir el comprobante', tone: 'error' })
+    }
+    let update = await supabase.from('orders').update({ buyer_payment_status:'sent', status:'buyer_payment_sent', buyer_payment_proof_path:path, buyer_payment_proof_name:file.name }).eq('id', orderId)
+    if (update.error && /schema cache|column|buyer_payment_proof/i.test(update.error.message || '')) {
+      update = await supabase.from('orders').update({ buyer_payment_status:'sent', status:'buyer_payment_sent' }).eq('id', orderId)
+    }
+    if (update.error) {
+      hideLoading()
+      return showMessage(update.error.message, { title: 'No se pudo informar el pago', tone: 'error' })
+    }
+    await addSystemMessage(orderId, `El comprador informó la transferencia y subió el comprobante: ${file.name}. El vendedor debe revisar su cuenta y confirmar cuando el pago esté acreditado.`)
+    const order = state.orders.find(o => o.id === orderId) || state.selectedOrder
+    await notifyUser(order?.seller_id, 'El comprador informó que realizó el pago y subió un comprobante. Revisá tu cuenta y confirmá cuando esté acreditado.', 'Pago informado por comprador', { view:'order', id:orderId })
+    await loadAll()
+    await openOrder(orderId)
+    hideLoading()
+  },
+  async viewPaymentProof(path){
+    if (!path) return
+    const { data, error } = await supabase.storage.from('payment-proofs').createSignedUrl(path, 60 * 5)
+    if (error) return showMessage(error.message, { title: 'No se pudo abrir el comprobante', tone: 'error' })
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+  },
   async openOrder(id){ await openOrder(id) },
   closeModal(){ document.getElementById('modalRoot')?.remove(); state.selectedOrder=null },
   closeVerificationModal(){
@@ -1591,21 +1729,36 @@ window.appActions = {
   async updateOrderFlow(id, field, value, status){
     const allowed = ['seller_delivery_status','buyer_delivery_status','admin_seller_delivery_status','admin_buyer_delivery_status','buyer_payment_status','seller_payment_status']
     if (!allowed.includes(field)) return
-    const order = state.orders.find(o => o.id === id)
+    const order = state.orders.find(o => o.id === id) || (await supabase.from('orders').select('*').eq('id', id).maybeSingle()).data
     const payload = { [field]: value }
     if (status) payload.status = status
+    showLoading('Actualizando operación...')
     const { error } = await supabase.from('orders').update(payload).eq('id', id)
-    if (error) return showMessage(error.message, { title: 'No se pudo actualizar', tone: 'error' })
-    if (status === 'awaiting_buyer_payment') await notifyUser(order?.buyer_id, 'El admin confirmó que recibió las entradas del vendedor. Ya podés realizar el pago y avisarlo en la operación.', 'Entradas recibidas por admin', { view:'order', id })
-    if (status === 'buyer_payment_sent') await notifyUser(order?.seller_id, 'El comprador informó que realizó el pago. Revisá tu cuenta y confirmá cuando lo hayas recibido.', 'Pago informado por comprador', { view:'order', id })
-    if (status === 'payment_confirmed') await notifyUsers([{ user_id:order?.buyer_id, message:'El vendedor confirmó que recibió el pago. El admin liberará las entradas.', subject:'Pago confirmado', action:{ view:'order', id } }])
-    if (status === 'completed') await notifyUser(order?.buyer_id, 'El admin liberó las entradas para vos. Revisá el detalle de la operación.', 'Entradas liberadas', { view:'order', id })
+    if (error) { hideLoading(); return showMessage(error.message, { title: 'No se pudo actualizar', tone: 'error' }) }
+    if (field === 'seller_delivery_status' && value === 'sent') await addSystemMessage(id, `El vendedor informó que envió las entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador ahora debe verificar recepción y validez.`)
+    if (field === 'buyer_delivery_status' && value === 'sent') await addSystemMessage(id, `El usuario 2 informó que envió sus entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador debe verificar ese lote.`)
+    if (field === 'admin_seller_delivery_status' && value === 'received_by_admin') await addSystemMessage(id, 'El administrador confirmó que recibió las entradas del usuario 1/vendedor.')
+    if (field === 'admin_buyer_delivery_status' && value === 'received_by_admin') await addSystemMessage(id, 'El administrador confirmó que recibió las entradas del usuario 2/comprador.')
+    if (status === 'awaiting_buyer_payment') {
+      await addSystemMessage(id, 'El administrador confirmó las entradas. El comprador ya puede transferir al vendedor usando los datos indicados en esta operación.')
+      await notifyUser(order?.buyer_id, 'El admin confirmó que recibió las entradas del vendedor. Ya podés realizar el pago y subir el comprobante en la operación.', 'Entradas recibidas por admin', { view:'order', id })
+    }
+    if (status === 'payment_confirmed') {
+      await addSystemMessage(id, 'El vendedor confirmó que recibió el pago. El administrador debe liberar las entradas al comprador.')
+      await notifyUsers([{ user_id:order?.buyer_id, message:'El vendedor confirmó que recibió el pago. El admin liberará las entradas.', subject:'Pago confirmado', action:{ view:'order', id } }])
+    }
+    if (status === 'completed') {
+      await addSystemMessage(id, 'Operación completada. El administrador liberó las entradas y ambas partes ya pueden calificarse.')
+      await notifyUser(order?.buyer_id, 'El admin liberó las entradas para vos. Revisá el detalle de la operación.', 'Entradas liberadas', { view:'order', id })
+    }
     await loadAll()
     await openOrder(id)
+    hideLoading()
     render()
   },
   async completeExchange(id){
     const order = state.orders.find(o => o.id === id)
+    showLoading('Liberando intercambio...')
     const { error } = await supabase.from('orders').update({
       status:'completed',
       seller_delivery_status:'released',
@@ -1613,13 +1766,15 @@ window.appActions = {
       admin_seller_delivery_status:'received_by_admin',
       admin_buyer_delivery_status:'received_by_admin'
     }).eq('id', id)
-    if (error) return showMessage(error.message, { title: 'No se pudo completar', tone: 'error' })
+    if (error) { hideLoading(); return showMessage(error.message, { title: 'No se pudo completar', tone: 'error' }) }
+    await addSystemMessage(id, 'Intercambio completado. El administrador liberó ambos lotes a las partes correspondientes.')
     await notifyUsers([
       { user_id:order?.seller_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado', action:{ view:'order', id } },
       { user_id:order?.buyer_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado', action:{ view:'order', id } }
     ])
     await loadAll()
     await openOrder(id)
+    hideLoading()
     render()
   },
   async submitReview(orderId, reviewedUserId){

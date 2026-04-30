@@ -88,6 +88,8 @@ create table if not exists orders (
   admin_buyer_delivery_status text default 'pending',
   buyer_payment_status text default 'pending',
   seller_payment_status text default 'pending',
+  buyer_payment_proof_path text,
+  buyer_payment_proof_name text,
   created_at timestamp default now()
 );
 
@@ -222,6 +224,8 @@ alter table orders add column if not exists admin_seller_delivery_status text de
 alter table orders add column if not exists admin_buyer_delivery_status text default 'pending';
 alter table orders add column if not exists buyer_payment_status text default 'pending';
 alter table orders add column if not exists seller_payment_status text default 'pending';
+alter table orders add column if not exists buyer_payment_proof_path text;
+alter table orders add column if not exists buyer_payment_proof_name text;
 alter table orders add column if not exists created_at timestamp default now();
 
 alter table messages add column if not exists order_id uuid;
@@ -272,6 +276,10 @@ values
 ('verification_disclaimer', 'Para operar necesitás subir documentación y completar prueba de vida. Un administrador revisará la solicitud.')
 on conflict (key) do nothing;
 
+insert into storage.buckets (id, name, public)
+values ('payment-proofs', 'payment-proofs', false)
+on conflict (id) do nothing;
+
 alter table users enable row level security;
 alter table matches enable row level security;
 alter table listings enable row level security;
@@ -291,6 +299,7 @@ drop policy if exists "open notifications" on notifications;
 drop policy if exists "open reviews" on reviews;
 drop policy if exists "open email_templates" on email_templates;
 drop policy if exists "open site_settings" on site_settings;
+drop policy if exists "open payment proofs" on storage.objects;
 
 create policy "open users" on users for all using (true) with check (true);
 create policy "open matches" on matches for all using (true) with check (true);
@@ -301,6 +310,7 @@ create policy "open notifications" on notifications for all using (true) with ch
 create policy "open reviews" on reviews for all using (true) with check (true);
 create policy "open email_templates" on email_templates for all using (true) with check (true);
 create policy "open site_settings" on site_settings for all using (true) with check (true);
+create policy "open payment proofs" on storage.objects for all using (bucket_id = 'payment-proofs') with check (bucket_id = 'payment-proofs');
 
 insert into storage.buckets (id, name, public)
 values ('profile-photos', 'profile-photos', true),
