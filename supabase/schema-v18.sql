@@ -33,6 +33,8 @@ create table if not exists users (
   identity_document_uploaded_at timestamp,
   identity_document_status text default 'not_submitted',
   identity_selfie_path text,
+  liveness_side_path text,
+  liveness_front_path text,
   identity_selfie_uploaded_at timestamp,
   liveness_status text default 'not_submitted',
   role text default 'user',
@@ -129,6 +131,8 @@ alter table users add column if not exists identity_document_path text;
 alter table users add column if not exists identity_document_uploaded_at timestamp;
 alter table users add column if not exists identity_document_status text default 'not_submitted';
 alter table users add column if not exists identity_selfie_path text;
+alter table users add column if not exists liveness_side_path text;
+alter table users add column if not exists liveness_front_path text;
 alter table users add column if not exists identity_selfie_uploaded_at timestamp;
 alter table users add column if not exists liveness_status text default 'not_submitted';
 alter table users alter column seller_rating drop default;

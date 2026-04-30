@@ -241,7 +241,7 @@ async function loadAll() {
     supabase.from('matches').select('*').order('match_number', { ascending:true }),
     supabase.from('listings').select('*').order('created_at', { ascending:false })
   ])
-  let users = await supabase.from('users').select('id,email,first_name,last_name,document_type,document_number,verification_status,seller_rating,seller_reviews_count,seller_sales_count,identity_document_path,identity_document_status,identity_selfie_path,liveness_status')
+  let users = await supabase.from('users').select('id,email,first_name,last_name,birth_date,nationality,phone,country,state,city,document_type,document_number,document_country,avatar_url,verification_status,seller_rating,seller_reviews_count,seller_sales_count,identity_document_path,identity_document_status,identity_selfie_path,liveness_side_path,liveness_front_path,liveness_status')
   if (users.error) users = await supabase.from('users').select('id,first_name,last_name,verification_status')
   state.matches = m.data || []
   state.listings = l.data || []
@@ -553,19 +553,17 @@ function profileView() {
           El documento debe verse nítido y con buena luz. Podés tapar datos sensibles que no necesitamos, como número de trámite, códigos secundarios o domicilio. Deben quedar visibles foto, nombres y número de DNI/documento.
         </div>
         <div class="verification-steps">
-          <label class="upload-card">
-            <input type="file" accept="image/*" onchange="window.appActions.uploadProfileFile('avatar', this)">
+          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('avatar')">
             <strong>1. Foto de perfil</strong>
-            <span>${p.avatar_url ? 'Foto cargada' : 'JPG, PNG o WebP. Se muestra junto a tu nombre.'}</span>
-          </label>
-          <label class="upload-card">
-            <input type="file" accept="image/*,.pdf" onchange="window.appActions.uploadProfileFile('document', this)">
+            <span>${p.avatar_url ? 'Foto cargada' : 'Buena luz, rostro visible, JPG/PNG/WebP hasta 8 MB.'}</span>
+          </button>
+          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('document')">
             <strong>2. Documento</strong>
             <span>${p.identity_document_path ? `Documento recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB'}</span>
-          </label>
+          </button>
           <button class="upload-card camera-card" type="button" onclick="window.appActions.startLivenessCheck()">
             <strong>3. Prueba de vida</strong>
-            <span>${p.identity_selfie_path ? `Selfie recibida · ${p.liveness_status || 'submitted'}` : 'Activá la cámara y seguí las instrucciones.'}</span>
+            <span>${p.liveness_side_path && p.liveness_front_path ? `2 tomas recibidas · ${p.liveness_status || 'submitted'}` : 'Captura automática: perfil y frente.'}</span>
           </button>
         </div>
       </section>
@@ -608,7 +606,7 @@ function orderCard(o) {
 function adminView() {
   if (!isAdmin()) return `<div class="container"><div class="empty">No tenés permisos de admin.</div></div>`
   const pending = state.orders.filter(o=>o.status !== 'completed').length
-  const verificationQueue = state.users.filter(u => u.verification_status === 'pending_review' && u.identity_document_path && u.identity_selfie_path)
+  const verificationQueue = state.users.filter(u => u.verification_status === 'pending_review' && u.identity_document_path && u.liveness_side_path && u.liveness_front_path)
   return `<div class="container">
     <h1>Dashboard admin</h1>
     <div class="stats-grid">
@@ -619,16 +617,15 @@ function adminView() {
     </div>
     <div class="panel">
       <h2>Verificaciones de identidad</h2>
-      <table class="admin-table"><thead><tr><th>Usuario</th><th>Documento</th><th>Estado</th><th>Archivos</th><th>Acción</th></tr></thead><tbody>
+      <table class="admin-table"><thead><tr><th>Usuario</th><th>Documento</th><th>Estado</th><th>Revisión</th></tr></thead><tbody>
         ${verificationQueue.length ? verificationQueue.map(u=>`
           <tr>
             <td>${escapeHtml(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario')} ${u.verification_status === 'verified' ? '<span class="verified-badge">✓</span>' : ''}</td>
             <td>${escapeHtml(u.document_type || '-')} ${escapeHtml(u.document_number || '')}</td>
             <td>${escapeHtml(u.verification_status || 'not_verified')}</td>
-            <td><button class="secondary-btn" onclick="window.appActions.viewVerificationFile('identity-documents','${u.identity_document_path || ''}')">Documento</button> <button class="secondary-btn" onclick="window.appActions.viewVerificationFile('verification-selfies','${u.identity_selfie_path || ''}')">Selfie</button></td>
-            <td><button class="pill-btn primary" onclick="window.appActions.updateUserVerification('${u.id}','verified')">Verificar</button> <button class="pill-btn danger" onclick="window.appActions.updateUserVerification('${u.id}','rejected')">Rechazar</button></td>
+            <td><button class="pill-btn primary" onclick="window.appActions.reviewVerification('${u.id}')">Revisar verificación</button></td>
           </tr>
-        `).join('') : `<tr><td colspan="5">No hay verificaciones pendientes.</td></tr>`}
+        `).join('') : `<tr><td colspan="4">No hay verificaciones pendientes.</td></tr>`}
       </tbody></table>
     </div>
     <div class="panel">
@@ -903,22 +900,47 @@ window.appActions = {
     if (error) await showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
     else { await showMessage('Tus datos fueron actualizados.', { title: 'Perfil actualizado', tone: 'success' }); await ensureProfile(); render() }
   },
-  async uploadProfileFile(kind, input){
-    const file = input.files?.[0]
+  openUploadModal(kind){
+    const isAvatar = kind === 'avatar'
+    let modal = document.getElementById('modalRoot')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'modalRoot'
+      document.body.appendChild(modal)
+    }
+    modal.innerHTML = `
+      <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
+        <div class="modal upload-modal">
+          <div class="modal-header"><h2>${isAvatar ? 'Subir foto de perfil' : 'Subir documento'}</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+          <div class="modal-body">
+            <div class="upload-disclaimer">
+              <strong>${isAvatar ? 'Indicaciones para una foto confiable' : 'Protegé tus datos antes de subir'}</strong>
+              <p>${isAvatar ? 'Usá una imagen clara, reciente, con buena luz y el rostro visible. Formatos permitidos: JPG, PNG o WebP. Tamaño máximo: 8 MB.' : 'El documento debe verse nítido, sin reflejos y con foto, nombres y número de DNI/documento visibles. Podés tapar número de trámite, domicilio, códigos secundarios y datos no necesarios. Formatos permitidos: imagen o PDF. Tamaño máximo: 8 MB.'}</p>
+            </div>
+            <label class="dropzone" ondragover="event.preventDefault()" ondrop="window.appActions.handleUploadDrop('${kind}', event)">
+              <input id="uploadInput" type="file" accept="${isAvatar ? 'image/*' : 'image/*,.pdf'}" onchange="window.appActions.uploadProfileFile('${kind}', this.files?.[0])">
+              <strong>Arrastrá el archivo acá</strong>
+              <span>o hacé click para seleccionarlo</span>
+            </label>
+          </div>
+        </div>
+      </div>`
+  },
+  handleUploadDrop(kind, event){
+    event.preventDefault()
+    const file = event.dataTransfer?.files?.[0]
+    if (file) this.uploadProfileFile(kind, file)
+  },
+  async uploadProfileFile(kind, file){
     if (!file || !state.user) return
     if (file.size > 8 * 1024 * 1024) {
-      input.value = ''
       return showMessage('El archivo no puede superar los 8 MB.', { title: 'Archivo demasiado grande', tone: 'error' })
-    }
-    if (kind === 'document') {
-      await showMessage('Antes de subirlo, podés tapar datos sensibles como número de trámite, códigos secundarios o información que no sea necesaria. Para verificar usamos foto, nombre y número de DNI/documento.', { title: 'Protegé tus datos', tone: 'info' })
     }
     const bucket = kind === 'avatar' ? 'profile-photos' : 'identity-documents'
     const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
     const path = `${state.user.id}/${kind}-${Date.now()}.${ext}`
     const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert:false, contentType:file.type })
     if (error) {
-      input.value = ''
       return showMessage(error.message, { title: 'No se pudo subir el archivo', tone: 'error' })
     }
     const payload = { id:state.user.id, email:state.user.email }
@@ -933,6 +955,7 @@ window.appActions = {
     }
     const { error:updateError } = await supabase.from('users').upsert(payload)
     if (updateError) return showMessage(updateError.message, { title: 'No se pudo actualizar el perfil', tone: 'error' })
+    this.closeVerificationModal()
     await ensureProfile()
     await showMessage(kind === 'avatar' ? 'Tu foto de perfil fue actualizada.' : (state.profile?.identity_selfie_path ? 'Documento recibido. Tu verificación quedó pendiente de revisión.' : 'Documento recibido. Para enviar la verificación, completá también la prueba de vida.'), { title: kind === 'avatar' ? 'Foto actualizada' : 'Documento recibido', tone: 'success' })
     render()
@@ -962,7 +985,7 @@ window.appActions = {
     render()
   },
   async startLivenessCheck(){
-    await showMessage('Para la prueba de vida, usá buena luz, mirá a cámara y girá levemente la cabeza hacia un lado y luego al centro antes de capturar. Esto ayuda a evitar fotos estáticas. La imagen será usada solo para verificar identidad.', { title: 'Prueba de vida', tone: 'info' })
+    await showMessage('Vamos a tomar dos fotos automáticamente: primero con la cabeza girada levemente hacia un costado y después mirando al frente. Usá buena luz y mantené el rostro dentro del cuadro.', { title: 'Prueba de vida', tone: 'info' })
     if (!navigator.mediaDevices?.getUserMedia) return showMessage('Tu navegador no permite usar la cámara desde esta página.', { title: 'Cámara no disponible', tone: 'error' })
     let modal = document.getElementById('modalRoot')
     if (!modal) {
@@ -977,8 +1000,8 @@ window.appActions = {
           <div class="modal-body">
             <div class="camera-layout">
               <video id="livenessVideo" autoplay playsinline muted></video>
-              <div class="document-warning">Mirá a cámara, girá levemente la cabeza hacia la derecha o izquierda y volvé al centro. Capturá cuando tu rostro se vea nítido.</div>
-              <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.captureLivenessSelfie()">Capturar selfie</button></div>
+              <div id="livenessInstruction" class="document-warning">Prepará la cámara...</div>
+              <div class="liveness-progress"><span id="livenessStep">Iniciando</span><strong id="livenessCountdown">3</strong></div>
             </div>
           </div>
         </div>
@@ -986,37 +1009,114 @@ window.appActions = {
     try {
       activeCameraStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false })
       document.getElementById('livenessVideo').srcObject = activeCameraStream
+      setTimeout(() => this.runLivenessCapture(), 900)
     } catch (error) {
       this.closeVerificationModal()
       await showMessage(error.message || 'No se pudo acceder a la cámara.', { title: 'Permiso de cámara', tone: 'error' })
     }
   },
-  async captureLivenessSelfie(){
-    const video = document.getElementById('livenessVideo')
-    if (!video || !state.user) return
+  captureVideoBlob(video){
     const canvas = document.createElement('canvas')
     canvas.width = video.videoWidth || 960
     canvas.height = video.videoHeight || 720
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9))
-    if (!blob) return showMessage('No se pudo capturar la imagen.', { title: 'Intentá de nuevo', tone: 'error' })
-    const path = `${state.user.id}/selfie-${Date.now()}.jpg`
-    const { error } = await supabase.storage.from('verification-selfies').upload(path, blob, { contentType:'image/jpeg' })
-    if (error) return showMessage(error.message, { title: 'No se pudo subir la selfie', tone: 'error' })
-    const hasDocument = Boolean(state.profile?.identity_document_path)
-    const { error:updateError } = await supabase.from('users').upsert({
-      id: state.user.id,
-      email: state.user.email,
-      identity_selfie_path: path,
-      identity_selfie_uploaded_at: new Date().toISOString(),
-      liveness_status: 'submitted',
-      verification_status: hasDocument ? 'pending_review' : state.profile?.verification_status || 'not_verified'
-    })
-    if (updateError) return showMessage(updateError.message, { title: 'No se pudo actualizar la verificación', tone: 'error' })
-    this.closeVerificationModal()
-    await ensureProfile()
-    await showMessage(hasDocument ? 'Selfie recibida. Tu verificación quedó pendiente de revisión.' : 'Selfie recibida. Para enviar la verificación, subí también tu documento.', { title: 'Prueba de vida recibida', tone: 'success' })
-    render()
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9))
+  },
+  async runLivenessCapture(){
+    const video = document.getElementById('livenessVideo')
+    if (!video || !state.user) return
+    const instruction = document.getElementById('livenessInstruction')
+    const step = document.getElementById('livenessStep')
+    const countdown = document.getElementById('livenessCountdown')
+    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+    const guidedCapture = async (label, text) => {
+      if (step) step.textContent = label
+      if (instruction) instruction.textContent = text
+      for (let i = 3; i > 0; i--) {
+        if (countdown) countdown.textContent = String(i)
+        await wait(1000)
+      }
+      if (countdown) countdown.textContent = '✓'
+      const blob = await this.captureVideoBlob(video)
+      if (!blob) throw new Error('No se pudo capturar la imagen.')
+      return blob
+    }
+    try {
+      const sideBlob = await guidedCapture('Toma 1 de 2', 'Girate levemente hacia un costado. La captura se toma automáticamente.')
+      await wait(600)
+      const frontBlob = await guidedCapture('Toma 2 de 2', 'Ahora mirá al frente, con el rostro centrado y buena luz.')
+      const sidePath = `${state.user.id}/side-${Date.now()}.jpg`
+      const frontPath = `${state.user.id}/front-${Date.now()}.jpg`
+      const sideUpload = await supabase.storage.from('verification-selfies').upload(sidePath, sideBlob, { contentType:'image/jpeg' })
+      if (sideUpload.error) throw sideUpload.error
+      const frontUpload = await supabase.storage.from('verification-selfies').upload(frontPath, frontBlob, { contentType:'image/jpeg' })
+      if (frontUpload.error) throw frontUpload.error
+      const hasDocument = Boolean(state.profile?.identity_document_path)
+      const { error:updateError } = await supabase.from('users').upsert({
+        id: state.user.id,
+        email: state.user.email,
+        identity_selfie_path: frontPath,
+        liveness_side_path: sidePath,
+        liveness_front_path: frontPath,
+        identity_selfie_uploaded_at: new Date().toISOString(),
+        liveness_status: 'submitted',
+        verification_status: hasDocument ? 'pending_review' : state.profile?.verification_status || 'not_verified'
+      })
+      if (updateError) throw updateError
+      this.closeVerificationModal()
+      await ensureProfile()
+      await showMessage(hasDocument ? 'Las dos tomas fueron recibidas. Tu verificación quedó pendiente de revisión.' : 'Las dos tomas fueron recibidas. Para enviar la verificación, subí también tu documento.', { title: 'Prueba de vida recibida', tone: 'success' })
+      render()
+    } catch (error) {
+      this.closeVerificationModal()
+      await showMessage(error.message || 'No se pudo completar la prueba de vida.', { title: 'Intentá de nuevo', tone: 'error' })
+    }
+  },
+  async captureLivenessSelfie(){
+    return this.runLivenessCapture()
+  },
+  async reviewVerification(userId){
+    const u = state.users.find(user => user.id === userId)
+    if (!u) return
+    const signed = async (bucket, path) => {
+      if (!path) return ''
+      const { data } = await supabase.storage.from(bucket).createSignedUrl(path, 180)
+      return data?.signedUrl || ''
+    }
+    const documentUrl = await signed('identity-documents', u.identity_document_path)
+    const sideUrl = await signed('verification-selfies', u.liveness_side_path)
+    const frontUrl = await signed('verification-selfies', u.liveness_front_path || u.identity_selfie_path)
+    const filePreview = (url, label) => url ? `<div class="review-asset"><strong>${label}</strong>${url.includes('.pdf') ? `<iframe src="${url}"></iframe>` : `<img src="${url}" alt="${label}">`}</div>` : `<div class="review-asset missing"><strong>${label}</strong><span>No cargado</span></div>`
+    let modal = document.getElementById('modalRoot')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'modalRoot'
+      document.body.appendChild(modal)
+    }
+    modal.innerHTML = `
+      <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
+        <div class="modal review-modal">
+          <div class="modal-header"><h2>Revisión de identidad</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+          <div class="modal-body">
+            <div class="review-summary">
+              <div class="avatar-frame small">${u.avatar_url ? `<img src="${escapeHtml(u.avatar_url)}" alt="Foto de perfil">` : `<span>${escapeHtml((u.first_name || 'U').slice(0,1).toUpperCase())}</span>`}</div>
+              <div>
+                <h3>${escapeHtml(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario')}</h3>
+                <p class="meta">${escapeHtml(u.document_type || '-')} ${escapeHtml(u.document_number || '')} · ${escapeHtml(u.document_country || '')}</p>
+                <p class="meta">${escapeHtml([u.nationality, u.country, u.city].filter(Boolean).join(' · '))}</p>
+              </div>
+            </div>
+            <div class="review-grid">
+              ${filePreview(u.avatar_url, 'Foto de perfil')}
+              ${filePreview(documentUrl, 'Documento')}
+              ${filePreview(sideUrl, 'Prueba de vida: costado')}
+              ${filePreview(frontUrl, 'Prueba de vida: frente')}
+            </div>
+            <div class="document-warning">Verificá que el documento sea nítido, que nombre y número coincidan con los datos del perfil, y que las dos tomas de vida correspondan a la misma persona.</div>
+            <div class="footer-actions"><button class="pill-btn danger" onclick="window.appActions.updateUserVerification('${u.id}','rejected')">Rechazar</button><button class="pill-btn primary" onclick="window.appActions.updateUserVerification('${u.id}','verified')">Verificar cuenta</button></div>
+          </div>
+        </div>
+      </div>`
   },
   async viewVerificationFile(bucket, path){
     if (!path) return showMessage('Todavía no hay archivo cargado.', { title: 'Sin archivo', tone: 'error' })
@@ -1044,6 +1144,7 @@ window.appActions = {
     }).eq('id', userId)
     if (error) return showMessage(error.message, { title: 'No se pudo actualizar', tone: 'error' })
     await loadAll()
+    this.closeVerificationModal()
     await showMessage(status === 'verified' ? 'Usuario verificado.' : 'Verificación rechazada.', { title: 'Estado actualizado', tone: 'success' })
     render()
   }
