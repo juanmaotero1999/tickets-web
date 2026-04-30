@@ -112,6 +112,20 @@ body.dark .match-toolbar{background:rgba(9,11,16,.86)}
 .form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
 .field label{display:block;font-weight:850;margin:0 0 7px;color:var(--text)}
 .field small{display:block;color:var(--muted);margin-top:5px}
+.match-picker{position:relative}
+.match-options{display:none;position:absolute;left:0;right:0;top:calc(100% + 8px);z-index:40;max-height:360px;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:8px}
+.match-options.open{display:flex;flex-direction:column;gap:6px}
+.match-option{width:100%;display:flex;align-items:center;gap:12px;text-align:left;background:transparent;color:var(--text);border-radius:14px;padding:10px}
+.match-option:hover{background:var(--bg)}
+.match-option span:last-child{display:flex;flex-direction:column;gap:3px;min-width:0}
+.match-option strong{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.match-option small{color:var(--muted);font-weight:750}
+.match-option-flags{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.selected-match,.selected-matches{min-height:44px;margin-top:8px}
+.selected-match .match-option{border:1px solid var(--line);background:var(--bg)}
+.selected-matches{display:flex;flex-wrap:wrap;gap:8px}
+.match-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:var(--bg);padding:7px 8px;font-size:13px;font-weight:850}
+.match-chip button{width:20px;height:20px;border-radius:999px;background:rgba(127,127,127,.16);color:var(--text);font-weight:950;display:grid;place-items:center}
 .list{display:flex;flex-direction:column;gap:12px}
 .item{border:1px solid var(--line);border-radius:20px;padding:16px;background:rgba(255,255,255,.55)}
 body.dark .item{background:rgba(255,255,255,.03)}

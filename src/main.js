@@ -113,6 +113,26 @@ const sellerReputation = (sellerId) => {
   return `★ ${rating} · ${sales} ventas · ${reviews} opiniones`
 }
 
+const matchLabel = (m) => `#${m.match_number} ${m.home_code || m.home_team} vs ${m.away_code || m.away_team} · ${m.city || ''}`
+
+const matchPickerOption = (m, target) => `
+  <button class="match-option" type="button" data-search="${escapeHtml(`${m.match_number} ${m.home_team} ${m.away_team} ${m.home_code} ${m.away_code} ${m.city} ${m.stadium}`.toLowerCase())}" onclick="window.appActions.pickMatch('${target}','${m.id}')">
+    <span class="match-option-flags">${flagImg(m.home_code, 'flag-mini')}${flagImg(m.away_code, 'flag-mini')}</span>
+    <span><strong>${matchLabel(m)}</strong><small>${m.group_name || phaseLabels[m.phase] || ''} · ${fmtDate(m.match_date)}</small></span>
+  </button>`
+
+function matchPicker(target, label, selectedId = '', multiple = false) {
+  const selected = state.matches.find(m => String(m.id) === String(selectedId))
+  return `
+    <div class="field match-picker" data-target="${target}">
+      <label>${label}</label>
+      <input id="${target}Search" class="input" placeholder="Buscar por partido, país, ciudad o estadio..." oninput="window.appActions.filterMatchPicker('${target}')" onfocus="window.appActions.openMatchPicker('${target}')" autocomplete="off">
+      <input id="${target}" type="hidden" value="${selectedId || ''}">
+      <div id="${target}Selected" class="${multiple ? 'selected-matches' : 'selected-match'}">${selected ? matchPickerOption(selected, target) : `<span class="meta">${multiple ? 'Seleccioná uno o más partidos' : 'Seleccioná un partido'}</span>`}</div>
+      <div id="${target}Options" class="match-options">${state.matches.map(m => matchPickerOption(m, target)).join('')}</div>
+    </div>`
+}
+
 function closeMessageModal(result = true) {
   const modal = document.getElementById('messageRoot')
   const resolver = modal?._resolver
@@ -209,11 +229,12 @@ async function ensureProfile() {
 }
 
 async function loadAll() {
-  const [m, l, users] = await Promise.all([
+  const [m, l] = await Promise.all([
     supabase.from('matches').select('*').order('match_number', { ascending:true }),
-    supabase.from('listings').select('*').order('created_at', { ascending:false }),
-    supabase.from('users').select('id,first_name,last_name,verification_status,seller_rating,seller_reviews_count,seller_sales_count')
+    supabase.from('listings').select('*').order('created_at', { ascending:false })
   ])
+  let users = await supabase.from('users').select('id,first_name,last_name,verification_status,seller_rating,seller_reviews_count,seller_sales_count')
+  if (users.error) users = await supabase.from('users').select('id,first_name,last_name,verification_status')
   state.matches = m.data || []
   state.listings = l.data || []
   state.users = users.data || []
@@ -448,13 +469,16 @@ function matchDetail() {
 }
 
 function listingCard(l, canBuy) {
+  const exchangeTargets = l.exchange_targets?.matches?.length
+    ? l.exchange_targets.matches.join(', ')
+    : l.exchange_targets?.text
   return `<div class="item">
     <div class="listing-head">
       <strong>${l.type==='exchange'?'Intercambio':'Venta'} · Categoría ${l.category}</strong>
       <span class="seller-rating">${sellerReputation(l.seller_id)}</span>
     </div>
     <p class="meta">Vendedor: ${escapeHtml(sellerName(l.seller_id))}</p>
-    <p class="meta">Cantidad: ${l.quantity} · ${l.price ? money(l.price,l.currency) : 'Sin precio'}${l.sector ? ` · Sector ${escapeHtml(l.sector)}` : ''}${l.seats ? ` · Asientos ${escapeHtml(l.seats)}` : ''} ${l.type==='exchange' && l.exchange_targets ? `<br>Busca: ${JSON.stringify(l.exchange_targets)}`:''}</p>
+    <p class="meta">Cantidad: ${l.quantity} · ${l.price ? money(l.price,l.currency) : 'Sin precio'}${l.sector ? ` · Sector ${escapeHtml(l.sector)}` : ''}${l.seats ? ` · Asientos ${escapeHtml(l.seats)}` : ''} ${l.type==='exchange' && exchangeTargets ? `<br>Busca: ${escapeHtml(exchangeTargets)}`:''}</p>
     ${canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`}
   </div>`
 }
@@ -468,7 +492,7 @@ function sellView(prefMatchId='') {
         <h2>Publicar entrada</h2>
         <div class="form-grid">
           <div class="field"><label>Tipo</label><select id="sellType" class="select" onchange="window.appActions.toggleExchangeFields()"><option value="sale">Vender</option><option value="exchange">Intercambiar</option></select></div>
-          <div class="field"><label>Partido</label><select id="sellMatch" class="select">${state.matches.map(m=>`<option value="${m.id}" ${String(m.id)===String(prefMatchId)?'selected':''}>#${m.match_number} ${m.home_code} vs ${m.away_code} · ${m.city}</option>`).join('')}</select></div>
+          ${matchPicker('sellMatch', 'Partido de tu entrada', prefMatchId)}
           <div class="field"><label>Categoría</label><select id="sellCat" class="select"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
           <div class="field"><label>Cantidad</label><input id="sellQty" type="number" min="1" class="input" value="1"></div>
           <div class="field"><label>Precio por entrada</label><input id="sellPrice" type="number" class="input" placeholder="Ej: 390000"></div>
@@ -479,7 +503,8 @@ function sellView(prefMatchId='') {
           <div class="field"><label>Alias / CBU / dato de cobro</label><input id="payValue" class="input"></div>
         </div>
         <div id="exchangeFields" style="display:none;margin-top:14px">
-          <div class="field"><label>Partidos que buscás para intercambio</label><textarea id="exchangeTargets" rows="3" placeholder="Ej: Partido 86 Categoría 1, Partido 95 Categoría 2"></textarea></div>
+          ${matchPicker('exchangeMatchIds', 'Partidos que buscás', '', true)}
+          <div class="field" style="margin-top:14px"><label>Detalle adicional del intercambio</label><textarea id="exchangeTargets" rows="3" placeholder="Ej: Categoría 1 o 2, preferentemente cerca del sector 120"></textarea></div>
         </div>
         <br><button class="pill-btn primary" onclick="window.appActions.createListing()">Publicar</button>
       </div>
@@ -698,6 +723,51 @@ window.appActions = {
     }
     render()
   },
+  openMatchPicker(target){
+    document.getElementById(`${target}Options`)?.classList.add('open')
+  },
+  filterMatchPicker(target){
+    const q = document.getElementById(`${target}Search`).value.toLowerCase()
+    document.getElementById(`${target}Options`)?.classList.add('open')
+    document.querySelectorAll(`#${target}Options .match-option`).forEach(option => {
+      option.style.display = option.dataset.search.includes(q) ? 'flex' : 'none'
+    })
+  },
+  pickMatch(target, id){
+    const input = document.getElementById(target)
+    const selected = document.getElementById(`${target}Selected`)
+    const search = document.getElementById(`${target}Search`)
+    const options = document.getElementById(`${target}Options`)
+    const match = state.matches.find(m => String(m.id) === String(id))
+    if (!input || !selected || !match) return
+    if (target === 'exchangeMatchIds') {
+      const ids = input.value ? input.value.split(',').filter(Boolean) : []
+      if (!ids.includes(String(id))) ids.push(String(id))
+      input.value = ids.join(',')
+      selected.innerHTML = ids.map(matchId => {
+        const item = state.matches.find(m => String(m.id) === String(matchId))
+        if (!item) return ''
+        return `<span class="match-chip">${flagImg(item.home_code, 'flag-mini')}${flagImg(item.away_code, 'flag-mini')} ${matchLabel(item)} <button type="button" onclick="window.appActions.removeExchangeMatch('${item.id}')">×</button></span>`
+      }).join('')
+    } else {
+      input.value = id
+      selected.innerHTML = matchPickerOption(match, target)
+    }
+    if (search) search.value = ''
+    options?.classList.remove('open')
+  },
+  removeExchangeMatch(id){
+    const input = document.getElementById('exchangeMatchIds')
+    const selected = document.getElementById('exchangeMatchIdsSelected')
+    if (!input || !selected) return
+    const ids = input.value.split(',').filter(value => value && String(value) !== String(id))
+    input.value = ids.join(',')
+    selected.innerHTML = ids.length ? ids.map(matchId => {
+      const item = state.matches.find(m => String(m.id) === String(matchId))
+      if (!item) return ''
+      return `<span class="match-chip">${flagImg(item.home_code, 'flag-mini')}${flagImg(item.away_code, 'flag-mini')} ${matchLabel(item)} <button type="button" onclick="window.appActions.removeExchangeMatch('${item.id}')">×</button></span>`
+    }).join('') : '<span class="meta">Seleccioná uno o más partidos</span>'
+  },
   toggleExchangeFields(){
     const el = document.getElementById('exchangeFields')
     el.style.display = document.getElementById('sellType').value === 'exchange' ? 'block' : 'none'
@@ -705,9 +775,16 @@ window.appActions = {
   async createListing(){
     if (!state.user) return showMessage('Tenés que ingresar para publicar entradas.', { title: 'Ingresá a tu cuenta' })
     const type = document.getElementById('sellType').value
+    const selectedMatch = Number(document.getElementById('sellMatch').value)
+    if (!selectedMatch) return showMessage('Seleccioná el partido de tu entrada.', { title: 'Falta el partido', tone: 'error' })
+    const exchangeMatchIds = document.getElementById('exchangeMatchIds')?.value.split(',').filter(Boolean) || []
+    const exchangeMatches = exchangeMatchIds.map(id => {
+      const match = state.matches.find(m => String(m.id) === String(id))
+      return match ? matchLabel(match) : null
+    }).filter(Boolean)
     const payload = {
       type,
-      match_id: Number(document.getElementById('sellMatch').value),
+      match_id: selectedMatch,
       category: Number(document.getElementById('sellCat').value),
       quantity: Number(document.getElementById('sellQty').value),
       price: Number(document.getElementById('sellPrice').value || 0),
@@ -718,7 +795,7 @@ window.appActions = {
       seller_payment_value: document.getElementById('payValue').value,
       sector: document.getElementById('sellSector').value.trim(),
       seats: document.getElementById('sellSeats').value.trim(),
-      exchange_targets: type==='exchange' ? { text: document.getElementById('exchangeTargets').value } : null
+      exchange_targets: type==='exchange' ? { match_ids: exchangeMatchIds, matches: exchangeMatches, text: document.getElementById('exchangeTargets').value } : null
     }
     const { error } = await supabase.from('listings').insert(payload)
     if (error) await showMessage(error.message, { title: 'No se pudo publicar', tone: 'error' })

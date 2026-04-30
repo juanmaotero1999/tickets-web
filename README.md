@@ -14,6 +14,8 @@ Si aparece `Could not find the 'seller_payment_method' column of 'listings' in t
 
 El mismo script carga/actualiza los 104 partidos del Mundial 2026. La fase de grupos usa equipos reales; las fases eliminatorias usan los cruces oficiales hasta que se conozcan los clasificados.
 
+Para cargar mercado inicial con 30 vendedores demo y ofertas en todos los partidos, ejecutar después `supabase/demo-seed.sql`.
+
 ## Admin
 Por defecto:
 - admin@demo.com
