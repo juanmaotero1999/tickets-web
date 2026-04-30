@@ -82,6 +82,12 @@ create table if not exists orders (
   quantity int,
   total numeric,
   status text default 'pending_payment',
+  seller_delivery_status text default 'pending',
+  buyer_delivery_status text default 'pending',
+  admin_seller_delivery_status text default 'pending',
+  admin_buyer_delivery_status text default 'pending',
+  buyer_payment_status text default 'pending',
+  seller_payment_status text default 'pending',
   created_at timestamp default now()
 );
 
@@ -180,6 +186,12 @@ alter table orders add column if not exists seller_id uuid;
 alter table orders add column if not exists quantity int;
 alter table orders add column if not exists total numeric;
 alter table orders add column if not exists status text default 'pending_payment';
+alter table orders add column if not exists seller_delivery_status text default 'pending';
+alter table orders add column if not exists buyer_delivery_status text default 'pending';
+alter table orders add column if not exists admin_seller_delivery_status text default 'pending';
+alter table orders add column if not exists admin_buyer_delivery_status text default 'pending';
+alter table orders add column if not exists buyer_payment_status text default 'pending';
+alter table orders add column if not exists seller_payment_status text default 'pending';
 alter table orders add column if not exists created_at timestamp default now();
 
 alter table messages add column if not exists order_id uuid;

@@ -62,13 +62,36 @@ const phaseRank = (phase = 'groups') => {
 const statusLabel = {
   active: 'Activa',
   pending_payment: 'Esperando pago',
+  seller_ticket_sent: 'Vendedor informó envío',
+  awaiting_buyer_payment: 'Esperando pago del comprador',
+  buyer_payment_sent: 'Comprador informó pago',
+  payment_confirmed: 'Pago confirmado por vendedor',
+  tickets_released: 'Entradas liberadas',
   payment_sent: 'Pago informado',
   under_review: 'Pendiente validación',
   completed: 'Completada',
   cancelled: 'Cancelada',
   exchange_pending: 'Intercambio pendiente',
+  exchange_in_progress: 'Intercambio en curso',
+  exchange_ready_to_release: 'Intercambio listo para liberar',
   exchange_accepted: 'Intercambio aceptado',
   issue: 'Con problema'
+}
+
+const deliveryLabel = {
+  pending: 'Pendiente',
+  sent: 'Informó envío',
+  received_by_admin: 'Recibido por admin',
+  released: 'Liberado',
+  not_applicable: 'No aplica'
+}
+
+const paymentLabel = {
+  pending: 'Pendiente',
+  requested: 'Pago solicitado',
+  sent: 'Pago informado',
+  received: 'Pago recibido',
+  not_applicable: 'No aplica'
 }
 
 const money = (n, c = 'ARS') => {
@@ -110,6 +133,11 @@ const verificationDisclaimer = () => state.user && !isVerified() ? `
   </div>` : ''
 
 const sellerProfile = (sellerId) => state.users.find(u => u.id === sellerId) || {}
+const userProfile = (userId) => state.users.find(u => u.id === userId) || {}
+const userName = (userId) => {
+  const u = userProfile(userId)
+  return `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario'
+}
 const sellerName = (sellerId) => {
   const seller = sellerProfile(sellerId)
   const name = `${seller.first_name || ''} ${seller.last_name || ''}`.trim()
@@ -132,6 +160,16 @@ function stopCameraStream() {
 }
 
 const matchLabel = (m) => `#${m.match_number} ${m.home_code || m.home_team} vs ${m.away_code || m.away_team} · ${m.city || ''}`
+const listingTicketSummary = (l = {}) => {
+  const m = state.matches.find(match => Number(match.id) === Number(l.match_id)) || {}
+  return `${m.match_number ? `#${m.match_number} ` : ''}${m.home_code || m.home_team || '-'} vs ${m.away_code || m.away_team || '-'} · Cat. ${l.category || '-'} · Cant. ${l.quantity || 1}${l.sector ? ` · Sector ${l.sector}` : ''}${l.seats ? ` · Asientos ${l.seats}` : ''}`
+}
+
+const exchangeWantedSummary = (l = {}) => {
+  const matches = l.exchange_targets?.matches?.length ? l.exchange_targets.matches.join(' / ') : ''
+  const text = l.exchange_targets?.text || ''
+  return [matches, text].filter(Boolean).join(' · ') || 'Entradas a coordinar en el chat'
+}
 
 const matchPickerOption = (m, target) => `
   <button class="match-option" type="button" data-search="${escapeHtml(`${m.match_number} ${m.home_team} ${m.away_team} ${m.home_code} ${m.away_code} ${m.city} ${m.stadium}`.toLowerCase())}" onclick="window.appActions.pickMatch('${target}','${m.id}')">
@@ -192,7 +230,7 @@ function showLoading(message = 'Cargando...') {
   root.innerHTML = `
     <div class="loading-backdrop">
       <div class="loading-card">
-        <img src="/logo_fifa_2026_0.png" alt="Copa del Mundo" class="loading-cup">
+        <img src="/mundial_2026.png" alt="Copa del Mundo" class="loading-cup">
         <strong>${escapeHtml(message)}</strong>
       </div>
     </div>`
@@ -303,8 +341,11 @@ async function loadAll() {
   state.listings = l.data || []
   state.users = users.data || []
   if (state.user) {
+    const ordersQuery = isAdmin()
+      ? supabase.from('orders').select('*').order('created_at', { ascending:false })
+      : supabase.from('orders').select('*').or(`buyer_id.eq.${state.user.id},seller_id.eq.${state.user.id}`).order('created_at', { ascending:false })
     const [orders, notifs] = await Promise.all([
-      supabase.from('orders').select('*').or(`buyer_id.eq.${state.user.id},seller_id.eq.${state.user.id}`).order('created_at', { ascending:false }),
+      ordersQuery,
       supabase.from('notifications').select('*').eq('user_id', state.user.id).order('created_at', { ascending:false })
     ])
     state.orders = orders.data || []
@@ -345,7 +386,7 @@ function nav() {
   <div class="topbar">
     <div class="topbar-inner">
       <div class="brand" onclick="window.appActions.setView('home')">
-        <div class="brand-badge">🏆</div>
+        <div class="brand-badge"><img src="/mundial_2026.png" alt="Mundial 2026"></div>
         <div><span>Tickets 2026</span><small style="color:var(--muted);font-weight:800">Marketplace seguro</small></div>
       </div>
       <div class="nav">
@@ -690,10 +731,43 @@ function orderCard(o) {
   </div>`
 }
 
+function operationFlowCard(o) {
+  const l = state.listings.find(x=>x.id===o.listing_id) || {}
+  const isExchange = l.type === 'exchange' || String(o.status || '').startsWith('exchange')
+  const seller = userName(o.seller_id)
+  const buyer = userName(o.buyer_id)
+  const ticket = listingTicketSummary(l)
+  const wanted = exchangeWantedSummary(l)
+  if (isExchange) {
+    return `<div class="operation-card">
+      <div class="operation-head">
+        <div><strong>Intercambio #${String(o.id).slice(0,8)}</strong><p class="meta">${statusLabel[o.status] || o.status}</p></div>
+        <button class="secondary-btn" onclick="window.appActions.openOrder('${o.id}')">Gestionar</button>
+      </div>
+      <div class="flow-grid">
+        <div class="flow-leg"><span>Entrega ${escapeHtml(seller)} a ${escapeHtml(buyer)}</span><strong>${escapeHtml(ticket)}</strong><em>${deliveryLabel[o.seller_delivery_status || 'pending']} · Admin: ${deliveryLabel[o.admin_seller_delivery_status || 'pending']}</em></div>
+        <div class="flow-leg"><span>Entrega ${escapeHtml(buyer)} a ${escapeHtml(seller)}</span><strong>${escapeHtml(wanted)}</strong><em>${deliveryLabel[o.buyer_delivery_status || 'pending']} · Admin: ${deliveryLabel[o.admin_buyer_delivery_status || 'pending']}</em></div>
+      </div>
+    </div>`
+  }
+  return `<div class="operation-card">
+    <div class="operation-head">
+      <div><strong>Venta #${String(o.id).slice(0,8)}</strong><p class="meta">${statusLabel[o.status] || o.status}</p></div>
+      <button class="secondary-btn" onclick="window.appActions.openOrder('${o.id}')">Gestionar</button>
+    </div>
+    <div class="flow-grid">
+      <div class="flow-leg"><span>Vendedor</span><strong>${escapeHtml(seller)}</strong><em>Entrada: ${deliveryLabel[o.seller_delivery_status || 'pending']} · Admin: ${deliveryLabel[o.admin_seller_delivery_status || 'pending']}</em></div>
+      <div class="flow-leg"><span>Comprador</span><strong>${escapeHtml(buyer)}</strong><em>Pago: ${paymentLabel[o.buyer_payment_status || 'pending']} · Entrega final: ${deliveryLabel[o.buyer_delivery_status || 'pending']}</em></div>
+      <div class="flow-leg full"><span>Entradas que administra la plataforma</span><strong>${escapeHtml(ticket)}</strong><em>Total: ${money(o.total || l.price || 0, l.currency || 'ARS')}</em></div>
+    </div>
+  </div>`
+}
+
 function adminView() {
   if (!isAdmin()) return `<div class="container"><div class="empty">No tenés permisos de admin.</div></div>`
-  const pending = state.orders.filter(o=>o.status !== 'completed').length
+  const pending = state.orders.filter(o=>!['completed','cancelled'].includes(o.status)).length
   const verificationQueue = state.users.filter(u => u.verification_status === 'pending_review' && u.identity_document_path && u.liveness_side_path && u.liveness_front_path)
+  const operations = state.orders
   const userRows = [...state.users].sort((a,b)=>`${a.first_name || ''} ${a.last_name || ''}`.localeCompare(`${b.first_name || ''} ${b.last_name || ''}`)).map(u=>`
     <tr>
       <td>${escapeHtml(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario')} ${verificationBadgeHtml(u.verification_status === 'verified')}<p class="meta">${escapeHtml(u.email || '')}</p></td>
@@ -703,15 +777,18 @@ function adminView() {
       <td><button class="secondary-btn" onclick="window.appActions.openUserEditor('${u.id}')">Editar</button></td>
     </tr>`).join('')
   return `<div class="container">
-    <h1>Dashboard admin</h1>
+    <div class="admin-title">
+      <div><h1>Dashboard admin</h1><p class="meta">Control operativo de usuarios, verificaciones y entrega de entradas.</p></div>
+      ${verificationQueue.length ? `<span class="admin-alert">! ${verificationQueue.length} verificación${verificationQueue.length === 1 ? '' : 'es'} pendiente${verificationQueue.length === 1 ? '' : 's'}</span>` : '<span class="badge ok">Sin verificaciones pendientes</span>'}
+    </div>
     <div class="stats-grid">
       <div class="stat"><strong>${state.matches.length}</strong><span>Partidos</span></div>
       <div class="stat"><strong>${state.listings.length}</strong><span>Publicaciones</span></div>
       <div class="stat"><strong>${state.orders.length}</strong><span>Órdenes</span></div>
       <div class="stat"><strong>${pending}</strong><span>A validar</span></div>
     </div>
-    <div class="panel">
-      <h2>Verificaciones de identidad</h2>
+    <section class="admin-module panel">
+      <div class="section-head"><div><h2>Verificaciones de identidad</h2><p class="meta">Revisá documento, foto y prueba de vida antes de habilitar operaciones.</p></div>${verificationQueue.length ? '<span class="module-dot">!</span>' : ''}</div>
       <table class="admin-table"><thead><tr><th>Usuario</th><th>Documento</th><th>Estado</th><th>Revisión</th></tr></thead><tbody>
         ${verificationQueue.length ? verificationQueue.map(u=>`
           <tr>
@@ -722,23 +799,18 @@ function adminView() {
           </tr>
         `).join('') : `<tr><td colspan="4">No hay verificaciones pendientes.</td></tr>`}
       </tbody></table>
-    </div>
-    <div class="panel">
-      <h2>Administrador de usuarios</h2>
+    </section>
+    <section class="admin-module panel">
+      <div class="section-head"><div><h2>Administrador de usuarios</h2><p class="meta">Editá datos, reputación, transacciones y verificación manual.</p></div></div>
       <table class="admin-table"><thead><tr><th>Usuario</th><th>Verificación</th><th>Transacciones</th><th>Reputación</th><th>Acción</th></tr></thead><tbody>
         ${userRows || `<tr><td colspan="5">No hay usuarios cargados.</td></tr>`}
       </tbody></table>
-    </div>
-    <div class="panel">
-      <h2>Centro de operaciones</h2>
-      <table class="admin-table"><thead><tr><th>ID</th><th>Tipo</th><th>Partido</th><th>Estado</th><th>Acción</th></tr></thead><tbody>
-        ${state.orders.map(o=>{
-          const l = state.listings.find(x=>x.id===o.listing_id)
-          const m = state.matches.find(x=>Number(x.id)===Number(l?.match_id))
-          return `<tr><td>#${String(o.id).slice(0,8)}</td><td>${l?.type || 'venta'}</td><td>${m?`${m.home_code} vs ${m.away_code}`:'-'}</td><td>${statusLabel[o.status] || o.status}</td><td><button class="secondary-btn" onclick="window.appActions.openOrder('${o.id}')">Abrir</button></td></tr>`
-        }).join('')}
-      </tbody></table>
-    </div>
+    </section>
+    <section class="admin-module panel">
+      <div class="section-head"><div><h2>Gestión de ventas e intercambios</h2><p class="meta">Cada tarjeta indica quién envía entradas, quién paga, qué debe recibir el admin y qué se libera a cada usuario.</p></div></div>
+      <div class="operation-disclaimer">Venta: el vendedor envía primero las entradas al admin. Cuando el admin confirma recepción, se avisa al comprador para pagar. Cuando el vendedor confirma pago recibido, el admin libera las entradas al comprador. Intercambio: cada usuario envía sus entradas al admin; cuando ambos lados están recibidos, el admin libera cada lote a la contraparte.</div>
+      <div class="operations-list">${operations.length ? operations.map(operationFlowCard).join('') : '<div class="empty">No hay operaciones todavía.</div>'}</div>
+    </section>
   </div>`
 }
 
@@ -761,6 +833,36 @@ function renderModal() {
   if (!o) return
   const l = state.listings.find(x=>x.id===o.listing_id) || {}
   const m = state.matches.find(x=>Number(x.id)===Number(l.match_id)) || {}
+  const isExchange = l.type === 'exchange' || String(o.status || '').startsWith('exchange')
+  const seller = userName(o.seller_id)
+  const buyer = userName(o.buyer_id)
+  const sellerTicket = listingTicketSummary(l)
+  const buyerTicket = exchangeWantedSummary(l)
+  const saleSteps = `
+    <div class="operation-disclaimer">Flujo de venta: 1. El vendedor envía las entradas al admin. 2. El admin confirma recepción y avisa al comprador que puede pagar. 3. El comprador informa pago. 4. El vendedor confirma que recibió el pago. 5. El admin libera las entradas al comprador.</div>
+    <div class="flow-grid">
+      <div class="flow-leg"><span>Debe enviar entradas al admin</span><strong>${escapeHtml(seller)}</strong><em>${escapeHtml(sellerTicket)} · Estado: ${deliveryLabel[o.seller_delivery_status || 'pending']}</em></div>
+      <div class="flow-leg"><span>Debe pagar al vendedor cuando el admin confirme entradas</span><strong>${escapeHtml(buyer)}</strong><em>Pago: ${paymentLabel[o.buyer_payment_status || 'pending']} · Recibe: ${deliveryLabel[o.buyer_delivery_status || 'pending']}</em></div>
+    </div>`
+  const exchangeSteps = `
+    <div class="operation-disclaimer">Flujo de intercambio: cada usuario envía sus entradas al admin. Cuando el admin tenga ambos lotes, libera las entradas del usuario 1 al usuario 2 y las del usuario 2 al usuario 1.</div>
+    <div class="flow-grid">
+      <div class="flow-leg"><span>${escapeHtml(seller)} entrega a ${escapeHtml(buyer)}</span><strong>${escapeHtml(sellerTicket)}</strong><em>Usuario: ${deliveryLabel[o.seller_delivery_status || 'pending']} · Admin: ${deliveryLabel[o.admin_seller_delivery_status || 'pending']}</em></div>
+      <div class="flow-leg"><span>${escapeHtml(buyer)} entrega a ${escapeHtml(seller)}</span><strong>${escapeHtml(buyerTicket)}</strong><em>Usuario: ${deliveryLabel[o.buyer_delivery_status || 'pending']} · Admin: ${deliveryLabel[o.admin_buyer_delivery_status || 'pending']}</em></div>
+    </div>`
+  const userActions = !isAdmin() ? `
+    <div class="footer-actions">
+      ${!isExchange && state.user?.id === o.seller_id ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','seller_delivery_status','sent','seller_ticket_sent')">Ya envié las entradas al admin</button><button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','seller_payment_status','received','payment_confirmed')">Confirmo pago recibido</button>` : ''}
+      ${!isExchange && state.user?.id === o.buyer_id ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','buyer_payment_status','sent','buyer_payment_sent')">Ya realicé el pago</button>` : ''}
+      ${isExchange && state.user?.id === o.seller_id ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','seller_delivery_status','sent','exchange_in_progress')">Ya envié mis entradas al admin</button>` : ''}
+      ${isExchange && state.user?.id === o.buyer_id ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','buyer_delivery_status','sent','exchange_in_progress')">Ya envié mis entradas al admin</button>` : ''}
+    </div>` : ''
+  const adminActions = isAdmin() ? `
+    <div class="footer-actions">
+      ${!isExchange ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','admin_seller_delivery_status','received_by_admin','awaiting_buyer_payment')">Confirmar entradas recibidas y avisar pago</button><button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','buyer_delivery_status','released','completed')">Liberar entradas al comprador</button>` : ''}
+      ${isExchange ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','admin_seller_delivery_status','received_by_admin','exchange_in_progress')">Recibí entradas de ${escapeHtml(seller)}</button><button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','admin_buyer_delivery_status','received_by_admin','exchange_ready_to_release')">Recibí entradas de ${escapeHtml(buyer)}</button><button class="pill-btn primary" onclick="window.appActions.completeExchange('${o.id}')">Liberar ambos lotes</button>` : ''}
+      <button class="pill-btn danger" onclick="window.appActions.updateOrder('${o.id}','issue')">Marcar problema</button>
+    </div>` : ''
   const html = `
     <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeModal()">
       <div class="modal">
@@ -768,6 +870,9 @@ function renderModal() {
         <div class="modal-body">
           <div class="grid-2">
             <div class="panel" style="box-shadow:none"><h3>Detalle</h3>
+              <p><strong>Tipo:</strong> ${isExchange ? 'Intercambio' : 'Venta'}</p>
+              <p><strong>Vendedor / usuario 1:</strong> ${escapeHtml(seller)}</p>
+              <p><strong>Comprador / usuario 2:</strong> ${escapeHtml(buyer)}</p>
               <p><strong>Partido:</strong> #${m.match_number || ''} ${m.home_code || ''} vs ${m.away_code || ''}</p>
               <p><strong>Categoría:</strong> ${l.category || '-'}</p>
               <p><strong>Sector:</strong> ${l.sector || '-'}</p>
@@ -775,7 +880,9 @@ function renderModal() {
               <p><strong>Cantidad:</strong> ${o.quantity || 1}</p>
               <p><strong>Total:</strong> ${money(o.total || l.price || 0, l.currency || 'ARS')}</p>
               <p><strong>Estado:</strong> <span class="badge warn">${statusLabel[o.status] || o.status}</span></p>
-              ${isAdmin()?`<div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.updateOrder('${o.id}','under_review')">En revisión</button><button class="pill-btn primary" onclick="window.appActions.updateOrder('${o.id}','completed')">Completar</button><button class="pill-btn danger" onclick="window.appActions.updateOrder('${o.id}','issue')">Problema</button></div>`:''}
+              ${isExchange ? exchangeSteps : saleSteps}
+              ${userActions}
+              ${adminActions}
             </div>
             <div class="panel" style="box-shadow:none"><h3>Chat</h3>
               <div class="chat-box">${state.messages.map(msg=>`<div class="msg ${msg.sender_id===state.user?.id?'me':''}">${msg.text}<br><small>${fmtDate(msg.created_at)}</small></div>`).join('')}</div>
@@ -1009,7 +1116,8 @@ window.appActions = {
     if (!qty) return
     if (qty > Number(l.quantity)) return showMessage('No hay suficientes entradas disponibles.', { title: 'Cantidad no disponible', tone: 'error' })
     const { data, error } = await supabase.from('orders').insert({
-      listing_id: l.id, buyer_id: state.user.id, seller_id: l.seller_id, quantity: qty, total: qty * Number(l.price || 0), status:'pending_payment'
+      listing_id: l.id, buyer_id: state.user.id, seller_id: l.seller_id, quantity: qty, total: qty * Number(l.price || 0), status:'pending_payment',
+      seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', buyer_payment_status:'pending', seller_payment_status:'pending'
     }).select().single()
     if (error) { await showMessage(error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
     await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
@@ -1026,7 +1134,8 @@ window.appActions = {
     const l = state.listings.find(x=>x.id===listingId)
     if (l.seller_id === state.user.id) return showMessage('No podés ofertar sobre tu propia publicación.', { title: 'Operación no permitida' })
     const { error } = await supabase.from('orders').insert({
-      listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:1,total:0,status:'exchange_pending'
+      listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:1,total:0,status:'exchange_pending',
+      seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', admin_buyer_delivery_status:'pending'
     })
     if (error) await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
     else {
@@ -1132,6 +1241,40 @@ window.appActions = {
   },
   async updateOrder(id,status){
     await supabase.from('orders').update({ status }).eq('id', id)
+    await loadAll()
+    await openOrder(id)
+    render()
+  },
+  async updateOrderFlow(id, field, value, status){
+    const allowed = ['seller_delivery_status','buyer_delivery_status','admin_seller_delivery_status','admin_buyer_delivery_status','buyer_payment_status','seller_payment_status']
+    if (!allowed.includes(field)) return
+    const order = state.orders.find(o => o.id === id)
+    const payload = { [field]: value }
+    if (status) payload.status = status
+    const { error } = await supabase.from('orders').update(payload).eq('id', id)
+    if (error) return showMessage(error.message, { title: 'No se pudo actualizar', tone: 'error' })
+    if (status === 'awaiting_buyer_payment') await notifyUser(order?.buyer_id, 'El admin confirmó que recibió las entradas del vendedor. Ya podés realizar el pago y avisarlo en la operación.', 'Entradas recibidas por admin')
+    if (status === 'buyer_payment_sent') await notifyUser(order?.seller_id, 'El comprador informó que realizó el pago. Revisá tu cuenta y confirmá cuando lo hayas recibido.', 'Pago informado por comprador')
+    if (status === 'payment_confirmed') await notifyUsers([{ user_id:order?.buyer_id, message:'El vendedor confirmó que recibió el pago. El admin liberará las entradas.', subject:'Pago confirmado' }])
+    if (status === 'completed') await notifyUser(order?.buyer_id, 'El admin liberó las entradas para vos. Revisá el detalle de la operación.', 'Entradas liberadas')
+    await loadAll()
+    await openOrder(id)
+    render()
+  },
+  async completeExchange(id){
+    const order = state.orders.find(o => o.id === id)
+    const { error } = await supabase.from('orders').update({
+      status:'completed',
+      seller_delivery_status:'released',
+      buyer_delivery_status:'released',
+      admin_seller_delivery_status:'received_by_admin',
+      admin_buyer_delivery_status:'received_by_admin'
+    }).eq('id', id)
+    if (error) return showMessage(error.message, { title: 'No se pudo completar', tone: 'error' })
+    await notifyUsers([
+      { user_id:order?.seller_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado' },
+      { user_id:order?.buyer_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado' }
+    ])
     await loadAll()
     await openOrder(id)
     render()
