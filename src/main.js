@@ -16,6 +16,8 @@ let state = {
   orders: [],
   messages: [],
   notifications: [],
+  reviews: [],
+  emailTemplates: [],
   theme: localStorage.getItem('theme') || 'light',
   authMode: 'login',
   notificationsOpen: false,
@@ -156,6 +158,17 @@ const sellerReputation = (sellerId) => {
   return `★ ${rating} · ${sales} ventas · ${reviews} opiniones`
 }
 
+const sellerReviews = (sellerId) => state.reviews.filter(r => r.reviewed_user_id === sellerId)
+const avatarHtml = (userId, className = 'seller-avatar') => {
+  const u = userProfile(userId)
+  const initial = escapeHtml((u.first_name || u.email || 'U').slice(0,1).toUpperCase())
+  return u.avatar_url ? `<img class="${className}" src="${escapeHtml(u.avatar_url)}" alt="Foto de ${escapeHtml(userName(userId))}">` : `<span class="${className} avatar-fallback">${initial}</span>`
+}
+const starsHtml = (rating = 0) => {
+  const value = Math.round(Number(rating || 0))
+  return `<span class="stars">${[1,2,3,4,5].map(n => n <= value ? '★' : '☆').join('')}</span>`
+}
+
 function stopCameraStream() {
   activeCameraStream?.getTracks().forEach(track => track.stop())
   activeCameraStream = null
@@ -263,12 +276,26 @@ async function sendEmailNotice(userId, subject, message, actionUrl = window.loca
   }
 }
 
+function renderTemplate(template = '', vars = {}) {
+  return String(template || '').replace(/\{\{\s*([\w_]+)\s*\}\}/g, (_, key) => vars[key] ?? '')
+}
+
+function emailCopy(eventKey, fallbackSubject, fallbackMessage, vars = {}) {
+  const tpl = state.emailTemplates.find(t => t.event_key === eventKey && t.enabled !== false)
+  if (!tpl) return { subject: fallbackSubject, message: fallbackMessage }
+  return {
+    subject: renderTemplate(tpl.subject || fallbackSubject, vars),
+    message: renderTemplate(tpl.body || fallbackMessage, vars)
+  }
+}
+
 async function notifyUser(userId, message, subject = 'Nuevo aviso en Digital Guale', action = {}) {
   if (!userId || !message) return
+  const copy = emailCopy(action.template, subject, message, action.vars || {})
   const payload = {
     user_id: userId,
-    message,
-    subject,
+    message: copy.message,
+    subject: copy.subject,
     action_view: action.view || null,
     action_id: action.id ? String(action.id) : null
   }
@@ -281,7 +308,7 @@ async function notifyUser(userId, message, subject = 'Nuevo aviso en Digital Gua
     console.warn('No se pudo crear la notificación', error)
     return
   }
-  await sendEmailNotice(userId, subject, message)
+  await sendEmailNotice(userId, copy.subject, copy.message)
 }
 
 async function notifyUsers(notices) {
@@ -289,6 +316,7 @@ async function notifyUsers(notices) {
 }
 
 function askQuantity(max) {
+  const options = Array.from({ length: Number(max) || 0 }, (_, i) => i + 1)
   return new Promise(resolve => {
     let root = document.getElementById('messageRoot')
     if (!root) {
@@ -302,8 +330,8 @@ function askQuantity(max) {
         <div class="message-modal">
           <div class="message-icon">#</div>
           <h2>Cantidad de entradas</h2>
-          <p>Disponibles: ${Number(max)}</p>
-          <input id="quantityPrompt" class="input" type="number" min="1" max="${Number(max)}" value="1" />
+          <p>Disponibles: ${Number(max)}. Elegí una cantidad para reservar.</p>
+          <select id="quantityPrompt" class="select">${options.map(value => `<option value="${value}">${value}</option>`).join('')}</select>
           <div class="footer-actions">
             <button class="secondary-btn" onclick="window.appActions.closeMessageModal(null)">Cancelar</button>
             <button class="pill-btn primary" onclick="window.appActions.resolveQuantityPrompt()">Continuar</button>
@@ -359,9 +387,15 @@ async function loadAll() {
   ])
   let users = await supabase.from('users').select('*')
   if (users.error) users = await supabase.from('users').select('id,first_name,last_name,verification_status')
+  let reviews = await supabase.from('reviews').select('*').order('created_at', { ascending:false })
+  if (reviews.error) reviews = { data: [] }
+  let templates = isAdmin() ? await supabase.from('email_templates').select('*').order('event_key') : { data: [] }
+  if (templates.error) templates = { data: [] }
   state.matches = m.data || []
   state.listings = l.data || []
   state.users = users.data || []
+  state.reviews = reviews.data || []
+  state.emailTemplates = templates.data || []
   if (state.user) {
     const ordersQuery = isAdmin()
       ? supabase.from('orders').select('*').order('created_at', { ascending:false })
@@ -630,11 +664,19 @@ function listingCard(l, canBuy, ownerView = false) {
     : l.exchange_targets?.text
   return `<div class="item">
     <div class="listing-head">
-      <strong>${l.type==='exchange'?'Intercambio':'Venta'} · Categoría ${l.category}</strong>
+      <div><span class="listing-price">${l.price ? money(l.price,l.currency) : 'Intercambio'}</span><strong>${l.type==='exchange'?'Intercambio':'Venta'} · Categoría ${l.category}</strong></div>
       <span class="seller-rating">${sellerReputation(l.seller_id)}</span>
     </div>
-    <p class="meta">Vendedor: ${escapeHtml(sellerName(l.seller_id))} ${verifiedLabel(l.seller_id)}</p>
-    <p class="meta">Cantidad: ${l.quantity} · ${l.price ? money(l.price,l.currency) : 'Sin precio'}${l.sector ? ` · Sector ${escapeHtml(l.sector)}` : ''}${l.seats ? ` · Asientos ${escapeHtml(l.seats)}` : ''} ${l.type==='exchange' && exchangeTargets ? `<br>Busca: ${escapeHtml(exchangeTargets)}`:''}</p>
+    <div class="seller-line">
+      <button class="seller-profile-button" onclick="window.appActions.openSellerProfile('${l.seller_id}')">${avatarHtml(l.seller_id)}<span>${escapeHtml(sellerName(l.seller_id))}</span></button>
+      ${verifiedLabel(l.seller_id)}
+    </div>
+    <div class="listing-facts">
+      <span><strong>${Number(l.quantity || 0)}</strong> disponibles</span>
+      ${l.sector ? `<span>Sector ${escapeHtml(l.sector)}</span>` : ''}
+      ${l.seats ? `<span>Asientos ${escapeHtml(l.seats)}</span>` : ''}
+    </div>
+    ${l.type==='exchange' && exchangeTargets ? `<p class="meta">Busca: ${escapeHtml(exchangeTargets)}</p>`:''}
     ${ownerView ? `<div class="listing-owner-actions"><span class="badge ok">Activa</span><button class="secondary-btn" onclick="window.appActions.openListingModal('', '${l.id}')">Editar</button><button class="pill-btn danger" onclick="window.appActions.deleteListing('${l.id}')">Eliminar</button></div>` : (canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`)}
   </div>`
 }
@@ -695,6 +737,33 @@ function openListingModalHtml(prefMatchId='', listing = null) {
         <div class="modal-header"><h2>${listing ? 'Editar publicación' : 'Nueva publicación'}</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
         <div class="modal-body">
           ${listingForm(prefMatchId, listing)}
+        </div>
+      </div>
+    </div>`
+}
+
+function sellerProfileModalHtml(userId) {
+  const u = userProfile(userId)
+  const reviews = sellerReviews(userId)
+  const rating = Number(u.seller_rating || 0)
+  return `
+    <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
+      <div class="modal seller-modal">
+        <div class="modal-header"><h2>Perfil del vendedor</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+        <div class="modal-body">
+          <div class="seller-profile-card">
+            ${avatarHtml(userId, 'seller-avatar large')}
+            <div>
+              <h2>${escapeHtml(userName(userId))} ${verificationBadgeHtml(u.verification_status === 'verified')}</h2>
+              <p class="meta">${u.verification_status === 'verified' ? 'Cuenta verificada' : 'Cuenta no verificada'}${u.city ? ` · ${escapeHtml(u.city)}` : ''}</p>
+              <p>${starsHtml(rating)} <strong>${rating ? rating.toFixed(1) : 'Sin puntuación'}</strong></p>
+              <p class="meta">${Number(u.seller_sales_count || 0)} transacciones positivas · ${Number(u.seller_reviews_count || 0)} reseñas</p>
+            </div>
+          </div>
+          <div class="seller-reviews">
+            <h3>Reseñas</h3>
+            ${reviews.length ? reviews.slice(0,5).map(r=>`<div class="review-text"><strong>${starsHtml(r.rating)} ${escapeHtml(userName(r.reviewer_id))}</strong><p>${escapeHtml(r.comment || 'Sin comentario')}</p></div>`).join('') : '<div class="empty">Este usuario todavía no tiene reseñas escritas.</div>'}
+          </div>
         </div>
       </div>
     </div>`
@@ -829,6 +898,16 @@ function adminView() {
       <td>★ ${u.seller_rating ? Number(u.seller_rating).toFixed(1) : '0.0'} · ${Number(u.seller_reviews_count || 0)} reseñas</td>
       <td><button class="secondary-btn" onclick="window.appActions.openUserEditor('${u.id}')">Editar</button></td>
     </tr>`).join('')
+  const templateRows = state.emailTemplates.map(t=>`
+    <div class="email-template-card">
+      <div><strong>${escapeHtml(t.event_key)}</strong><p class="meta">Variables: {{partido}}, {{precio}}, {{sector}}, {{asientos}}, {{cantidad}}, {{categoria}}, {{comprador}}, {{vendedor}}</p></div>
+      <div class="form-grid">
+        <div class="field"><label>Asunto</label><input id="tpl_subject_${t.id}" class="input" value="${escapeHtml(t.subject || '')}"></div>
+        <div class="field"><label>Activo</label><select id="tpl_enabled_${t.id}" class="select"><option value="true" ${t.enabled !== false ? 'selected' : ''}>Sí</option><option value="false" ${t.enabled === false ? 'selected' : ''}>No</option></select></div>
+        <div class="field full-field"><label>Cuerpo</label><textarea id="tpl_body_${t.id}" rows="4">${escapeHtml(t.body || '')}</textarea></div>
+      </div>
+      <div class="footer-actions"><button class="secondary-btn" onclick="window.appActions.saveEmailTemplate('${t.id}')">Guardar plantilla</button></div>
+    </div>`).join('')
   return `<div class="container">
     <div class="admin-title">
       <div><h1>Dashboard admin</h1><p class="meta">Control operativo de usuarios, verificaciones y entrega de entradas.</p></div>
@@ -863,6 +942,10 @@ function adminView() {
       <div class="section-head"><div><h2>Gestión de ventas e intercambios</h2><p class="meta">Cada tarjeta indica quién envía entradas, quién paga, qué debe recibir el admin y qué se libera a cada usuario.</p></div></div>
       <div class="operation-disclaimer">Venta: el vendedor envía primero las entradas al admin. Cuando el admin confirma recepción, se avisa al comprador para pagar. Cuando el vendedor confirma pago recibido, el admin libera las entradas al comprador. Intercambio: cada usuario envía sus entradas al admin; cuando ambos lados están recibidos, el admin libera cada lote a la contraparte.</div>
       <div class="operations-list">${operations.length ? operations.map(operationFlowCard).join('') : '<div class="empty">No hay operaciones todavía.</div>'}</div>
+    </section>
+    <section class="admin-module panel">
+      <div class="section-head"><div><h2>Plantillas de emails</h2><p class="meta">Configurá los textos por evento. Podés usar variables entre llaves dobles.</p></div></div>
+      <div class="operations-list">${templateRows || '<div class="empty">No hay plantillas cargadas. Ejecutá el schema para crear las plantillas base.</div>'}</div>
     </section>
   </div>`
 }
@@ -926,6 +1009,18 @@ function renderModal() {
       <button class="secondary-btn" onclick="window.appActions.updateOrder('${o.id}','cancelled')">Cancelar y devolver stock</button>
       <button class="pill-btn danger" onclick="window.appActions.updateOrder('${o.id}','issue')">Marcar problema</button>
     </div>` : ''
+  const reviewTarget = state.user?.id === o.seller_id ? o.buyer_id : o.seller_id
+  const canReview = state.user && !isAdmin() && o.status === 'completed' && reviewTarget
+  const reviewBox = canReview ? `
+    <div class="panel" style="box-shadow:none;margin-top:14px">
+      <h3>Dejar reseña</h3>
+      <p class="meta">Calificá a ${escapeHtml(userName(reviewTarget))} por esta operación.</p>
+      <div class="form-grid">
+        <div class="field"><label>Puntuación</label><select id="reviewRating" class="select"><option value="5">5 estrellas</option><option value="4">4 estrellas</option><option value="3">3 estrellas</option><option value="2">2 estrellas</option><option value="1">1 estrella</option></select></div>
+        <div class="field"><label>Comentario</label><textarea id="reviewComment" rows="3" placeholder="Contá cómo fue la operación"></textarea></div>
+      </div>
+      <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.submitReview('${o.id}','${reviewTarget}')">Enviar reseña</button></div>
+    </div>` : ''
   const html = `
     <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeModal()">
       <div class="modal">
@@ -946,6 +1041,7 @@ function renderModal() {
               ${isExchange ? exchangeSteps : saleSteps}
               ${userActions}
               ${adminActions}
+              ${reviewBox}
             </div>
             <div class="panel" style="box-shadow:none"><h3>Chat</h3>
               <div class="chat-box">${state.messages.map(msg=>`<div class="msg ${msg.sender_id===state.user?.id?'me':''}">${msg.text}<br><small>${fmtDate(msg.created_at)}</small></div>`).join('')}</div>
@@ -1074,6 +1170,7 @@ window.appActions = {
     if (error) { await showMessage(error.message, { title: 'No se pudo crear la cuenta', tone: 'error' }); return }
     if (data.user) {
       await supabase.from('users').upsert({ id:data.user.id,email,first_name,last_name,document_type,document_number,account_status:'active',verification_status:'not_verified',preferred_currency:'ARS' })
+      await notifyUser(data.user.id, 'Tu cuenta fue creada. Verificá tu identidad para poder comprar, vender e intercambiar.', 'Bienvenido a Entradas FIFA', { view:'profile', template:'registro', vars:{ nombre:first_name } })
     }
     await showMessage('Usuario creado. Iniciá sesión.', { title: 'Cuenta lista', tone: 'success' })
   },
@@ -1193,6 +1290,15 @@ window.appActions = {
       }).join('') : '<span class="meta">Seleccioná uno o más partidos</span>'
     }
   },
+  openSellerProfile(userId){
+    let modal = document.getElementById('modalRoot')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'modalRoot'
+      document.body.appendChild(modal)
+    }
+    modal.innerHTML = sellerProfileModalHtml(userId)
+  },
   async createListing(){
     if (!state.user) return showMessage('Tenés que ingresar para publicar entradas.', { title: 'Ingresá a tu cuenta' })
     if (!canOperate()) return showMessage('Tu cuenta debe estar verificada para publicar entradas.', { title: 'Verificación requerida', tone: 'error' })
@@ -1251,8 +1357,8 @@ window.appActions = {
     if (error) { await showMessage(error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
     await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
     await notifyUsers([
-      { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente', action:{ view:'order', id:data.id } },
-      { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada', action:{ view:'order', id:data.id } }
+      { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente', action:{ view:'order', id:data.id, template:'venta_pendiente', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } },
+      { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada', action:{ view:'order', id:data.id, template:'compra_iniciada', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } }
     ])
     await showMessage('Seguí los pasos del proceso seguro dentro del detalle de la operación. Usá el chat para coordinar y no hagas pagos ni entregas por fuera de la plataforma.', { title: 'Compra iniciada', tone: 'success' })
     await loadAll()
@@ -1271,7 +1377,7 @@ window.appActions = {
     }).select().single()
     if (error) await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
     else {
-      await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio', { view:'order', id:data.id })
+      await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio', { view:'order', id:data.id, template:'intercambio_oferta', vars:{ partido:listingTicketSummary(l), comprador:userName(state.user.id), vendedor:userName(l.seller_id) } })
       await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; render()
     }
   },
@@ -1421,6 +1527,24 @@ window.appActions = {
     ])
     await loadAll()
     await openOrder(id)
+    render()
+  },
+  async submitReview(orderId, reviewedUserId){
+    const rating = Number(document.getElementById('reviewRating')?.value || 5)
+    const comment = document.getElementById('reviewComment')?.value.trim() || ''
+    const { data: existingReview } = await supabase.from('reviews').select('id').eq('order_id', orderId).eq('reviewer_id', state.user.id).eq('reviewed_user_id', reviewedUserId).maybeSingle()
+    const request = existingReview?.id
+      ? supabase.from('reviews').update({ rating, comment }).eq('id', existingReview.id)
+      : supabase.from('reviews').insert({ order_id: orderId, reviewer_id: state.user.id, reviewed_user_id: reviewedUserId, rating, comment })
+    const { error } = await request
+    if (error) return showMessage(error.message, { title: 'No se pudo guardar la reseña', tone: 'error' })
+    const existing = sellerReviews(reviewedUserId).filter(r => !(r.order_id === orderId && r.reviewer_id === state.user.id))
+    const nextReviews = [...existing, { reviewed_user_id: reviewedUserId, rating }]
+    const avg = nextReviews.reduce((sum, r) => sum + Number(r.rating || 0), 0) / nextReviews.length
+    await supabase.from('users').update({ seller_rating: avg, seller_reviews_count: nextReviews.length }).eq('id', reviewedUserId)
+    await showMessage('Gracias. Tu reseña ya quedó publicada en el perfil del usuario.', { title: 'Reseña guardada', tone: 'success' })
+    await loadAll()
+    await openOrder(orderId)
     render()
   },
   async startLivenessCheck(){
@@ -1665,12 +1789,24 @@ window.appActions = {
           ? 'Tu verificación fue aprobada. Ya podés comprar, vender e intercambiar entradas.'
           : 'Tu verificación fue rechazada. Podés volver a cargar la documentación desde Mi perfil.',
         payload.verification_status === 'verified' ? 'Verificación aprobada' : 'Verificación rechazada',
-        { view:'profile' }
+        { view:'profile', template: payload.verification_status === 'verified' ? 'verificacion_aprobada' : 'verificacion_rechazada', vars:{ motivo:'' } }
       )
     }
     await loadAll()
     this.closeVerificationModal()
     await showMessage('Los datos del usuario fueron actualizados.', { title: 'Usuario actualizado', tone: 'success' })
+    render()
+  },
+  async saveEmailTemplate(id){
+    const payload = {
+      subject: document.getElementById(`tpl_subject_${id}`)?.value || '',
+      body: document.getElementById(`tpl_body_${id}`)?.value || '',
+      enabled: document.getElementById(`tpl_enabled_${id}`)?.value === 'true'
+    }
+    const { error } = await supabase.from('email_templates').update(payload).eq('id', id)
+    if (error) return showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
+    await showMessage('La plantilla fue actualizada.', { title: 'Plantilla guardada', tone: 'success' })
+    await loadAll()
     render()
   },
   async updateUserVerification(userId, status){
@@ -1692,7 +1828,7 @@ window.appActions = {
     const message = status === 'verified'
       ? 'Tu verificación fue aprobada. Ya podés comprar, vender e intercambiar entradas.'
       : `Tu verificación fue rechazada.${reason ? ` Motivo: ${reason}` : ' Podés volver a cargar la documentación desde Mi perfil.'}`
-    await notifyUser(userId, message, status === 'verified' ? 'Verificación aprobada' : 'Verificación rechazada', { view:'profile' })
+    await notifyUser(userId, message, status === 'verified' ? 'Verificación aprobada' : 'Verificación rechazada', { view:'profile', template: status === 'verified' ? 'verificacion_aprobada' : 'verificacion_rechazada', vars:{ motivo:reason } })
     await loadAll()
     this.closeVerificationModal()
     await showMessage(status === 'verified' ? 'Usuario verificado.' : 'Verificación rechazada.', { title: 'Estado actualizado', tone: 'success' })

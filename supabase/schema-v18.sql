@@ -110,6 +110,26 @@ create table if not exists notifications (
   created_at timestamp default now()
 );
 
+create table if not exists reviews (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid,
+  reviewer_id uuid,
+  reviewed_user_id uuid,
+  rating int,
+  comment text,
+  created_at timestamp default now(),
+  unique(order_id, reviewer_id, reviewed_user_id)
+);
+
+create table if not exists email_templates (
+  id uuid primary key default gen_random_uuid(),
+  event_key text unique,
+  subject text,
+  body text,
+  enabled boolean default true,
+  created_at timestamp default now()
+);
+
 -- Compatibilidad con bases creadas por versiones anteriores.
 -- CREATE TABLE IF NOT EXISTS no agrega columnas si la tabla ya existia.
 alter table users add column if not exists email text unique;
@@ -210,12 +230,37 @@ alter table notifications add column if not exists action_id text;
 alter table notifications add column if not exists read boolean default false;
 alter table notifications add column if not exists created_at timestamp default now();
 
+alter table reviews add column if not exists order_id uuid;
+alter table reviews add column if not exists reviewer_id uuid;
+alter table reviews add column if not exists reviewed_user_id uuid;
+alter table reviews add column if not exists rating int;
+alter table reviews add column if not exists comment text;
+alter table reviews add column if not exists created_at timestamp default now();
+
+alter table email_templates add column if not exists event_key text;
+alter table email_templates add column if not exists subject text;
+alter table email_templates add column if not exists body text;
+alter table email_templates add column if not exists enabled boolean default true;
+alter table email_templates add column if not exists created_at timestamp default now();
+
+insert into email_templates (event_key, subject, body, enabled)
+values
+('registro', 'Bienvenido a Entradas FIFA', 'Hola {{nombre}}, tu cuenta fue creada. Verificá tu identidad para operar.', true),
+('compra_iniciada', 'Compra iniciada: {{partido}}', 'Compraste {{cantidad}} entrada(s) para {{partido}}. Total: {{precio}}. Sector {{sector}}, asientos {{asientos}}.', true),
+('venta_pendiente', 'Nueva venta pendiente: {{partido}}', 'Vendiste {{cantidad}} entrada(s) para {{partido}}. Categoría {{categoria}}, sector {{sector}}, asientos {{asientos}}.', true),
+('intercambio_oferta', 'Nueva oferta de intercambio', 'Recibiste una oferta de intercambio para {{partido}}.', true),
+('verificacion_aprobada', 'Verificación aprobada', 'Tu cuenta fue verificada. Ya podés comprar, vender e intercambiar.', true),
+('verificacion_rechazada', 'Verificación rechazada', 'Tu verificación fue rechazada. Motivo: {{motivo}}', true)
+on conflict (event_key) do nothing;
+
 alter table users enable row level security;
 alter table matches enable row level security;
 alter table listings enable row level security;
 alter table orders enable row level security;
 alter table messages enable row level security;
 alter table notifications enable row level security;
+alter table reviews enable row level security;
+alter table email_templates enable row level security;
 
 drop policy if exists "open users" on users;
 drop policy if exists "open matches" on matches;
@@ -223,6 +268,8 @@ drop policy if exists "open listings" on listings;
 drop policy if exists "open orders" on orders;
 drop policy if exists "open messages" on messages;
 drop policy if exists "open notifications" on notifications;
+drop policy if exists "open reviews" on reviews;
+drop policy if exists "open email_templates" on email_templates;
 
 create policy "open users" on users for all using (true) with check (true);
 create policy "open matches" on matches for all using (true) with check (true);
@@ -230,6 +277,8 @@ create policy "open listings" on listings for all using (true) with check (true)
 create policy "open orders" on orders for all using (true) with check (true);
 create policy "open messages" on messages for all using (true) with check (true);
 create policy "open notifications" on notifications for all using (true) with check (true);
+create policy "open reviews" on reviews for all using (true) with check (true);
+create policy "open email_templates" on email_templates for all using (true) with check (true);
 
 insert into storage.buckets (id, name, public)
 values ('profile-photos', 'profile-photos', true),
