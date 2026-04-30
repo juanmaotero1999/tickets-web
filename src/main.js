@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase.js'
 import './styles.css'
 
 const app = document.getElementById('app')
+let activeCameraStream = null
 
 let state = {
   session: null,
@@ -105,6 +106,7 @@ const sellerName = (sellerId) => {
   const name = `${seller.first_name || ''} ${seller.last_name || ''}`.trim()
   return name || 'Vendedor verificado'
 }
+const verifiedBadge = (sellerId) => sellerProfile(sellerId).verification_status === 'verified' ? '<span class="verified-badge">✓</span>' : ''
 const sellerReputation = (sellerId) => {
   const seller = sellerProfile(sellerId)
   const sales = Number(seller.seller_sales_count || 0)
@@ -112,6 +114,11 @@ const sellerReputation = (sellerId) => {
   if (!sales && !reviews) return 'Sin ventas todavía'
   const rating = seller.seller_rating ? Number(seller.seller_rating).toFixed(1) : 'Sin calificar'
   return `★ ${rating} · ${sales} ventas · ${reviews} opiniones`
+}
+
+function stopCameraStream() {
+  activeCameraStream?.getTracks().forEach(track => track.stop())
+  activeCameraStream = null
 }
 
 const matchLabel = (m) => `#${m.match_number} ${m.home_code || m.home_team} vs ${m.away_code || m.away_team} · ${m.city || ''}`
@@ -234,7 +241,7 @@ async function loadAll() {
     supabase.from('matches').select('*').order('match_number', { ascending:true }),
     supabase.from('listings').select('*').order('created_at', { ascending:false })
   ])
-  let users = await supabase.from('users').select('id,first_name,last_name,verification_status,seller_rating,seller_reviews_count,seller_sales_count')
+  let users = await supabase.from('users').select('id,email,first_name,last_name,document_type,document_number,verification_status,seller_rating,seller_reviews_count,seller_sales_count,identity_document_path,identity_document_status,identity_selfie_path,liveness_status')
   if (users.error) users = await supabase.from('users').select('id,first_name,last_name,verification_status')
   state.matches = m.data || []
   state.listings = l.data || []
@@ -478,7 +485,7 @@ function listingCard(l, canBuy) {
       <strong>${l.type==='exchange'?'Intercambio':'Venta'} · Categoría ${l.category}</strong>
       <span class="seller-rating">${sellerReputation(l.seller_id)}</span>
     </div>
-    <p class="meta">Vendedor: ${escapeHtml(sellerName(l.seller_id))}</p>
+    <p class="meta">Vendedor: ${escapeHtml(sellerName(l.seller_id))} ${verifiedBadge(l.seller_id)}</p>
     <p class="meta">Cantidad: ${l.quantity} · ${l.price ? money(l.price,l.currency) : 'Sin precio'}${l.sector ? ` · Sector ${escapeHtml(l.sector)}` : ''}${l.seats ? ` · Asientos ${escapeHtml(l.seats)}` : ''} ${l.type==='exchange' && exchangeTargets ? `<br>Busca: ${escapeHtml(exchangeTargets)}`:''}</p>
     ${canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`}
   </div>`
@@ -539,27 +546,27 @@ function profileView() {
         <div class="form-grid">${fieldHtml(personalFields)}</div>
       </section>
       <section class="profile-module">
-        <h2>Documento</h2>
+        <h2>Verificación</h2>
+        <p class="meta">Subí tu foto de perfil, el frente de tu documento y completá una prueba de vida con cámara. Un administrador revisará que nombre, foto y número de documento coincidan.</p>
         <div class="form-grid">${fieldHtml(documentFields)}</div>
         <div class="document-warning">
-          Podés tapar datos sensibles que no necesitamos, como número de trámite o códigos secundarios. Para verificar tu cuenta usamos foto, nombre y número de DNI/documento.
+          El documento debe verse nítido y con buena luz. Podés tapar datos sensibles que no necesitamos, como número de trámite, códigos secundarios o domicilio. Deben quedar visibles foto, nombres y número de DNI/documento.
         </div>
-        <div class="upload-row">
-          <label class="upload-card">
-            <input type="file" accept="image/*,.pdf" onchange="window.appActions.uploadProfileFile('document', this)">
-            <strong>Subir documento</strong>
-            <span>${p.identity_document_path ? `Documento recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB'}</span>
-          </label>
-        </div>
-      </section>
-      <section class="profile-module">
-        <h2>Foto de perfil</h2>
-        <div class="upload-row">
+        <div class="verification-steps">
           <label class="upload-card">
             <input type="file" accept="image/*" onchange="window.appActions.uploadProfileFile('avatar', this)">
-            <strong>Subir foto</strong>
-            <span>JPG, PNG o WebP. Se muestra en tu perfil público.</span>
+            <strong>1. Foto de perfil</strong>
+            <span>${p.avatar_url ? 'Foto cargada' : 'JPG, PNG o WebP. Se muestra junto a tu nombre.'}</span>
           </label>
+          <label class="upload-card">
+            <input type="file" accept="image/*,.pdf" onchange="window.appActions.uploadProfileFile('document', this)">
+            <strong>2. Documento</strong>
+            <span>${p.identity_document_path ? `Documento recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB'}</span>
+          </label>
+          <button class="upload-card camera-card" type="button" onclick="window.appActions.startLivenessCheck()">
+            <strong>3. Prueba de vida</strong>
+            <span>${p.identity_selfie_path ? `Selfie recibida · ${p.liveness_status || 'submitted'}` : 'Activá la cámara y seguí las instrucciones.'}</span>
+          </button>
         </div>
       </section>
       <section class="profile-module">
@@ -601,6 +608,7 @@ function orderCard(o) {
 function adminView() {
   if (!isAdmin()) return `<div class="container"><div class="empty">No tenés permisos de admin.</div></div>`
   const pending = state.orders.filter(o=>o.status !== 'completed').length
+  const verificationQueue = state.users.filter(u => u.verification_status === 'pending_review' && u.identity_document_path && u.identity_selfie_path)
   return `<div class="container">
     <h1>Dashboard admin</h1>
     <div class="stats-grid">
@@ -608,6 +616,20 @@ function adminView() {
       <div class="stat"><strong>${state.listings.length}</strong><span>Publicaciones</span></div>
       <div class="stat"><strong>${state.orders.length}</strong><span>Órdenes</span></div>
       <div class="stat"><strong>${pending}</strong><span>A validar</span></div>
+    </div>
+    <div class="panel">
+      <h2>Verificaciones de identidad</h2>
+      <table class="admin-table"><thead><tr><th>Usuario</th><th>Documento</th><th>Estado</th><th>Archivos</th><th>Acción</th></tr></thead><tbody>
+        ${verificationQueue.length ? verificationQueue.map(u=>`
+          <tr>
+            <td>${escapeHtml(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario')} ${u.verification_status === 'verified' ? '<span class="verified-badge">✓</span>' : ''}</td>
+            <td>${escapeHtml(u.document_type || '-')} ${escapeHtml(u.document_number || '')}</td>
+            <td>${escapeHtml(u.verification_status || 'not_verified')}</td>
+            <td><button class="secondary-btn" onclick="window.appActions.viewVerificationFile('identity-documents','${u.identity_document_path || ''}')">Documento</button> <button class="secondary-btn" onclick="window.appActions.viewVerificationFile('verification-selfies','${u.identity_selfie_path || ''}')">Selfie</button></td>
+            <td><button class="pill-btn primary" onclick="window.appActions.updateUserVerification('${u.id}','verified')">Verificar</button> <button class="pill-btn danger" onclick="window.appActions.updateUserVerification('${u.id}','rejected')">Rechazar</button></td>
+          </tr>
+        `).join('') : `<tr><td colspan="5">No hay verificaciones pendientes.</td></tr>`}
+      </tbody></table>
     </div>
     <div class="panel">
       <h2>Centro de operaciones</h2>
@@ -907,16 +929,20 @@ window.appActions = {
       payload.identity_document_path = path
       payload.identity_document_status = 'pending_review'
       payload.identity_document_uploaded_at = new Date().toISOString()
-      payload.verification_status = 'pending_review'
+      payload.verification_status = state.profile?.identity_selfie_path ? 'pending_review' : 'not_verified'
     }
     const { error:updateError } = await supabase.from('users').upsert(payload)
     if (updateError) return showMessage(updateError.message, { title: 'No se pudo actualizar el perfil', tone: 'error' })
     await ensureProfile()
-    await showMessage(kind === 'avatar' ? 'Tu foto de perfil fue actualizada.' : 'Documento recibido. Lo revisaremos para verificar tu cuenta.', { title: kind === 'avatar' ? 'Foto actualizada' : 'Verificación en revisión', tone: 'success' })
+    await showMessage(kind === 'avatar' ? 'Tu foto de perfil fue actualizada.' : (state.profile?.identity_selfie_path ? 'Documento recibido. Tu verificación quedó pendiente de revisión.' : 'Documento recibido. Para enviar la verificación, completá también la prueba de vida.'), { title: kind === 'avatar' ? 'Foto actualizada' : 'Documento recibido', tone: 'success' })
     render()
   },
   async openOrder(id){ await openOrder(id) },
   closeModal(){ document.getElementById('modalRoot')?.remove(); state.selectedOrder=null },
+  closeVerificationModal(){
+    stopCameraStream()
+    document.getElementById('modalRoot')?.remove()
+  },
   closeMessageModal,
   resolveQuantityPrompt(){
     const input = document.getElementById('quantityPrompt')
@@ -933,6 +959,92 @@ window.appActions = {
     await supabase.from('orders').update({ status }).eq('id', id)
     await loadAll()
     await openOrder(id)
+    render()
+  },
+  async startLivenessCheck(){
+    await showMessage('Para la prueba de vida, usá buena luz, mirá a cámara y girá levemente la cabeza hacia un lado y luego al centro antes de capturar. Esto ayuda a evitar fotos estáticas. La imagen será usada solo para verificar identidad.', { title: 'Prueba de vida', tone: 'info' })
+    if (!navigator.mediaDevices?.getUserMedia) return showMessage('Tu navegador no permite usar la cámara desde esta página.', { title: 'Cámara no disponible', tone: 'error' })
+    let modal = document.getElementById('modalRoot')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'modalRoot'
+      document.body.appendChild(modal)
+    }
+    modal.innerHTML = `
+      <div class="modal-backdrop show">
+        <div class="modal camera-modal">
+          <div class="modal-header"><h2>Prueba de vida</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+          <div class="modal-body">
+            <div class="camera-layout">
+              <video id="livenessVideo" autoplay playsinline muted></video>
+              <div class="document-warning">Mirá a cámara, girá levemente la cabeza hacia la derecha o izquierda y volvé al centro. Capturá cuando tu rostro se vea nítido.</div>
+              <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.captureLivenessSelfie()">Capturar selfie</button></div>
+            </div>
+          </div>
+        </div>
+      </div>`
+    try {
+      activeCameraStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false })
+      document.getElementById('livenessVideo').srcObject = activeCameraStream
+    } catch (error) {
+      this.closeVerificationModal()
+      await showMessage(error.message || 'No se pudo acceder a la cámara.', { title: 'Permiso de cámara', tone: 'error' })
+    }
+  },
+  async captureLivenessSelfie(){
+    const video = document.getElementById('livenessVideo')
+    if (!video || !state.user) return
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth || 960
+    canvas.height = video.videoHeight || 720
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9))
+    if (!blob) return showMessage('No se pudo capturar la imagen.', { title: 'Intentá de nuevo', tone: 'error' })
+    const path = `${state.user.id}/selfie-${Date.now()}.jpg`
+    const { error } = await supabase.storage.from('verification-selfies').upload(path, blob, { contentType:'image/jpeg' })
+    if (error) return showMessage(error.message, { title: 'No se pudo subir la selfie', tone: 'error' })
+    const hasDocument = Boolean(state.profile?.identity_document_path)
+    const { error:updateError } = await supabase.from('users').upsert({
+      id: state.user.id,
+      email: state.user.email,
+      identity_selfie_path: path,
+      identity_selfie_uploaded_at: new Date().toISOString(),
+      liveness_status: 'submitted',
+      verification_status: hasDocument ? 'pending_review' : state.profile?.verification_status || 'not_verified'
+    })
+    if (updateError) return showMessage(updateError.message, { title: 'No se pudo actualizar la verificación', tone: 'error' })
+    this.closeVerificationModal()
+    await ensureProfile()
+    await showMessage(hasDocument ? 'Selfie recibida. Tu verificación quedó pendiente de revisión.' : 'Selfie recibida. Para enviar la verificación, subí también tu documento.', { title: 'Prueba de vida recibida', tone: 'success' })
+    render()
+  },
+  async viewVerificationFile(bucket, path){
+    if (!path) return showMessage('Todavía no hay archivo cargado.', { title: 'Sin archivo', tone: 'error' })
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 120)
+    if (error) return showMessage(error.message, { title: 'No se pudo abrir el archivo', tone: 'error' })
+    let modal = document.getElementById('modalRoot')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'modalRoot'
+      document.body.appendChild(modal)
+    }
+    modal.innerHTML = `
+      <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
+        <div class="modal">
+          <div class="modal-header"><h2>Archivo de verificación</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+          <div class="modal-body"><iframe class="verification-preview" src="${data.signedUrl}"></iframe></div>
+        </div>
+      </div>`
+  },
+  async updateUserVerification(userId, status){
+    const { error } = await supabase.from('users').update({
+      verification_status: status,
+      identity_document_status: status === 'verified' ? 'approved' : 'rejected',
+      liveness_status: status === 'verified' ? 'approved' : 'rejected'
+    }).eq('id', userId)
+    if (error) return showMessage(error.message, { title: 'No se pudo actualizar', tone: 'error' })
+    await loadAll()
+    await showMessage(status === 'verified' ? 'Usuario verificado.' : 'Verificación rechazada.', { title: 'Estado actualizado', tone: 'success' })
     render()
   }
 }

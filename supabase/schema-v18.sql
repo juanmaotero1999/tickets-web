@@ -32,6 +32,9 @@ create table if not exists users (
   identity_document_path text,
   identity_document_uploaded_at timestamp,
   identity_document_status text default 'not_submitted',
+  identity_selfie_path text,
+  identity_selfie_uploaded_at timestamp,
+  liveness_status text default 'not_submitted',
   role text default 'user',
   created_at timestamp default now()
 );
@@ -125,6 +128,9 @@ alter table users add column if not exists avatar_url text;
 alter table users add column if not exists identity_document_path text;
 alter table users add column if not exists identity_document_uploaded_at timestamp;
 alter table users add column if not exists identity_document_status text default 'not_submitted';
+alter table users add column if not exists identity_selfie_path text;
+alter table users add column if not exists identity_selfie_uploaded_at timestamp;
+alter table users add column if not exists liveness_status text default 'not_submitted';
 alter table users alter column seller_rating drop default;
 alter table users add column if not exists role text default 'user';
 alter table users add column if not exists created_at timestamp default now();
@@ -203,13 +209,18 @@ create policy "open notifications" on notifications for all using (true) with ch
 
 insert into storage.buckets (id, name, public)
 values ('profile-photos', 'profile-photos', true),
-       ('identity-documents', 'identity-documents', false)
+       ('identity-documents', 'identity-documents', false),
+       ('verification-selfies', 'verification-selfies', false)
 on conflict (id) do update set public = excluded.public;
 
 drop policy if exists "profile photos read" on storage.objects;
 drop policy if exists "profile photos upload own" on storage.objects;
 drop policy if exists "identity docs upload own" on storage.objects;
 drop policy if exists "identity docs read own" on storage.objects;
+drop policy if exists "identity docs admin read" on storage.objects;
+drop policy if exists "verification selfies upload own" on storage.objects;
+drop policy if exists "verification selfies read own" on storage.objects;
+drop policy if exists "verification selfies admin read" on storage.objects;
 
 create policy "profile photos read" on storage.objects
 for select using (bucket_id = 'profile-photos');
@@ -223,6 +234,18 @@ for insert with check (bucket_id = 'identity-documents' and auth.uid()::text = (
 
 create policy "identity docs read own" on storage.objects
 for select using (bucket_id = 'identity-documents' and auth.uid()::text = (storage.foldername(name))[1]);
+
+create policy "identity docs admin read" on storage.objects
+for select using (bucket_id = 'identity-documents' and exists (select 1 from public.users where public.users.id = auth.uid() and public.users.role = 'admin'));
+
+create policy "verification selfies upload own" on storage.objects
+for insert with check (bucket_id = 'verification-selfies' and auth.uid()::text = (storage.foldername(name))[1]);
+
+create policy "verification selfies read own" on storage.objects
+for select using (bucket_id = 'verification-selfies' and auth.uid()::text = (storage.foldername(name))[1]);
+
+create policy "verification selfies admin read" on storage.objects
+for select using (bucket_id = 'verification-selfies' and exists (select 1 from public.users where public.users.id = auth.uid() and public.users.role = 'admin'));
 
 -- Fuerza a PostgREST/Supabase API a refrescar el cache del esquema.
 notify pgrst, 'reload schema';
