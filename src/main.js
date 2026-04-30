@@ -1102,14 +1102,14 @@ function startOperationAutoRefresh() {
     const modal = document.getElementById('modalRoot')
     if (!modal?.querySelector('.operation-modal')) return
     const chatInput = document.getElementById('chatText')
-    if (document.activeElement === chatInput && chatInput?.value.trim()) return
+    if (document.activeElement === chatInput) return
     const [orderResult, messagesResult] = await Promise.all([
       supabase.from('orders').select('*').eq('id', state.selectedOrder.id).maybeSingle(),
       supabase.from('messages').select('*').eq('order_id', state.selectedOrder.id).order('created_at', { ascending:true })
     ])
     if (orderResult.data) state.selectedOrder = orderResult.data
     if (!messagesResult.error) state.messages = messagesResult.data || []
-    renderModal()
+    renderModal({ preserveScroll:true })
   }, 5000)
 }
 
@@ -1195,9 +1195,15 @@ async function addSystemMessage(orderId, text) {
   } catch (_) {}
 }
 
-function renderModal() {
+function renderModal(options = {}) {
   const o = state.selectedOrder
   if (!o) return
+  const previousModal = document.querySelector('#modalRoot .operation-modal')
+  const previousChat = document.querySelector('#modalRoot .chat-box')
+  const scrollState = options.preserveScroll ? {
+    modalTop: previousModal?.scrollTop || 0,
+    chatTop: previousChat?.scrollTop || 0
+  } : null
   const l = state.listings.find(x=>x.id===o.listing_id) || {}
   const m = state.matches.find(x=>Number(x.id)===Number(l.match_id)) || {}
   const isExchange = l.type === 'exchange' || String(o.status || '').startsWith('exchange')
@@ -1261,6 +1267,14 @@ function renderModal() {
     document.body.appendChild(modal)
   }
   modal.innerHTML = html
+  if (scrollState) {
+    requestAnimationFrame(() => {
+      const nextModal = document.querySelector('#modalRoot .operation-modal')
+      const nextChat = document.querySelector('#modalRoot .chat-box')
+      if (nextModal) nextModal.scrollTop = scrollState.modalTop
+      if (nextChat) nextChat.scrollTop = scrollState.chatTop
+    })
+  }
 }
 
 function render() {
