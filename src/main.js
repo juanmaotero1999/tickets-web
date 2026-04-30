@@ -107,9 +107,10 @@ const sellerName = (sellerId) => {
 }
 const sellerReputation = (sellerId) => {
   const seller = sellerProfile(sellerId)
-  const rating = Number(seller.seller_rating || 5).toFixed(1)
   const sales = Number(seller.seller_sales_count || 0)
   const reviews = Number(seller.seller_reviews_count || 0)
+  if (!sales && !reviews) return 'Sin ventas todavía'
+  const rating = seller.seller_rating ? Number(seller.seller_rating).toFixed(1) : 'Sin calificar'
   return `★ ${rating} · ${sales} ventas · ${reviews} opiniones`
 }
 

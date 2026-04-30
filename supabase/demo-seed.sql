@@ -4,36 +4,36 @@
 
 with demo_users(idx, first_name, last_name, email, rating, reviews, sales) as (
   values
-  (1,'Santiago','Molina','santiago.molina.demo@example.com',4.9,38,124),
-  (2,'Valentina','Rossi','valentina.rossi.demo@example.com',4.8,31,98),
-  (3,'Mateo','Silva','mateo.silva.demo@example.com',4.7,24,76),
-  (4,'Camila','Fernandez','camila.fernandez.demo@example.com',5.0,42,151),
-  (5,'Nicolas','Pereyra','nicolas.pereyra.demo@example.com',4.6,19,63),
-  (6,'Lucia','Martinez','lucia.martinez.demo@example.com',4.9,35,112),
-  (7,'Tomas','Herrera','tomas.herrera.demo@example.com',4.7,28,89),
-  (8,'Martina','Suarez','martina.suarez.demo@example.com',4.8,33,105),
-  (9,'Agustin','Romero','agustin.romero.demo@example.com',4.5,17,57),
-  (10,'Sofia','Castro','sofia.castro.demo@example.com',4.9,44,139),
-  (11,'Joaquin','Vega','joaquin.vega.demo@example.com',4.6,21,68),
-  (12,'Florencia','Acosta','florencia.acosta.demo@example.com',4.8,29,94),
-  (13,'Ignacio','Navarro','ignacio.navarro.demo@example.com',4.7,26,83),
-  (14,'Julieta','Medina','julieta.medina.demo@example.com',5.0,47,166),
-  (15,'Benjamin','Ortega','benjamin.ortega.demo@example.com',4.6,22,71),
-  (16,'Renata','Gimenez','renata.gimenez.demo@example.com',4.9,39,128),
-  (17,'Facundo','Sosa','facundo.sosa.demo@example.com',4.7,25,80),
-  (18,'Victoria','Luna','victoria.luna.demo@example.com',4.8,32,101),
-  (19,'Lautaro','Campos','lautaro.campos.demo@example.com',4.5,18,59),
-  (20,'Emilia','Ibarra','emilia.ibarra.demo@example.com',4.9,41,133),
-  (21,'Bruno','Arias','bruno.arias.demo@example.com',4.6,20,66),
-  (22,'Micaela','Rivas','micaela.rivas.demo@example.com',4.8,30,97),
-  (23,'Gonzalo','Mendez','gonzalo.mendez.demo@example.com',4.7,27,85),
-  (24,'Carolina','Farias','carolina.farias.demo@example.com',5.0,45,158),
-  (25,'Ramiro','Cabrera','ramiro.cabrera.demo@example.com',4.6,23,73),
-  (26,'Antonella','Aguirre','antonella.aguirre.demo@example.com',4.9,36,117),
-  (27,'Federico','Morales','federico.morales.demo@example.com',4.7,28,90),
-  (28,'Paula','Benitez','paula.benitez.demo@example.com',4.8,34,108),
-  (29,'Diego','Correa','diego.correa.demo@example.com',4.5,16,54),
-  (30,'Milagros','Paz','milagros.paz.demo@example.com',4.9,40,130)
+  (1,'Jorge','Boso','jorge.boso.demo@example.com',5.0,2,2),
+  (2,'Damian','Gentile','damian.gentile.demo@example.com',5.0,1,1),
+  (3,'Camila','Tonetti','camila.tonetti.demo@example.com',5.0,3,3),
+  (4,'Valentina','Rossi','valentina.rossi.demo@example.com',5.0,2,2),
+  (5,'Mateo','Silva','mateo.silva.demo@example.com',5.0,1,1),
+  (6,'Lucia','Martinez','lucia.martinez.demo@example.com',5.0,3,3),
+  (7,'Tomas','Herrera','tomas.herrera.demo@example.com',5.0,2,2),
+  (8,'Martina','Suarez','martina.suarez.demo@example.com',5.0,1,1),
+  (9,'Agustin','Romero','agustin.romero.demo@example.com',5.0,3,3),
+  (10,'Sofia','Castro','sofia.castro.demo@example.com',5.0,2,2),
+  (11,'Nicolas','Pereyra','nicolas.pereyra.demo@example.com',5.0,1,1),
+  (12,'Florencia','Acosta','florencia.acosta.demo@example.com',5.0,3,3),
+  (13,'Ignacio','Navarro','ignacio.navarro.demo@example.com',5.0,2,2),
+  (14,'Julieta','Medina','julieta.medina.demo@example.com',5.0,1,1),
+  (15,'Benjamin','Ortega','benjamin.ortega.demo@example.com',5.0,3,3),
+  (16,'Renata','Gimenez','renata.gimenez.demo@example.com',5.0,2,2),
+  (17,'Facundo','Sosa','facundo.sosa.demo@example.com',5.0,1,1),
+  (18,'Victoria','Luna','victoria.luna.demo@example.com',5.0,3,3),
+  (19,'Lautaro','Campos','lautaro.campos.demo@example.com',5.0,2,2),
+  (20,'Emilia','Ibarra','emilia.ibarra.demo@example.com',5.0,1,1),
+  (21,'Bruno','Arias','bruno.arias.demo@example.com',5.0,3,3),
+  (22,'Micaela','Dalla Fontana','micaela.dallafontana.demo@example.com',5.0,2,2),
+  (23,'Gonzalo','Mendez','gonzalo.mendez.demo@example.com',5.0,1,1),
+  (24,'Carolina','Farias','carolina.farias.demo@example.com',5.0,3,3),
+  (25,'Ramiro','Dell Acqua','ramiro.dellacqua.demo@example.com',4.0,2,2),
+  (26,'Antonella','Zampieri','antonella.zampieri.demo@example.com',4.0,1,1),
+  (27,'Federico','Morales','federico.morales.demo@example.com',4.0,3,3),
+  (28,'Paula','Benitez','paula.benitez.demo@example.com',4.0,2,2),
+  (29,'Diego','Quagliaro','diego.quagliaro.demo@example.com',3.0,1,1),
+  (30,'Milagros','Mazzitelli','milagros.mazzitelli.demo@example.com',3.0,2,2)
 )
 insert into users (
   id, email, first_name, last_name, account_status, verification_status,
@@ -60,23 +60,51 @@ on conflict (id) do update set
   seller_sales_count = excluded.seller_sales_count,
   verification_status = excluded.verification_status;
 
-with cats(category, base_price) as (
-  values (1,1700), (2,1400), (3,1200)
+with cats(category, multiplier) as (
+  values (1,1.00), (2,0.66), (3,0.40)
+),
+priced_matches as (
+  select
+    m.*,
+    greatest(
+      case
+        when m.phase = 'final' then 6730
+        when m.phase = 'semifinals' then 3295
+        when m.phase = 'quarterfinals' then 1450
+        when m.phase in ('round16','round_of_16','r16') then 850
+        when m.phase = 'round32' then 560
+        when m.phase = 'third_place' then 650
+        else 320
+      end,
+      case
+        when m.phase = 'groups' and (m.home_code in ('ARG','BRA','GER','MEX','USA','COL','ENG','FRA','ESP','POR') or m.away_code in ('ARG','BRA','GER','MEX','USA','COL','ENG','FRA','ESP','POR')) then 760
+        when m.phase = 'groups' and (m.home_code in ('URU','NED','BEL','CRO','SUI','JPN','MAR') or m.away_code in ('URU','NED','BEL','CRO','SUI','JPN','MAR')) then 430
+        when m.phase = 'groups' then 260
+        else 0
+      end
+    ) as cat1_anchor
+  from matches m
 ),
 demo_listings as (
   select
-    ('20000000-' || lpad(m.id::text, 4, '0') || '-' || c.category || '000-8000-' || lpad((m.id * 10 + c.category)::text, 12, '0'))::uuid as id,
-    m.id as match_id,
+    ('20000000-' || lpad(pm.id::text, 4, '0') || '-' || c.category || '000-8000-' || lpad((pm.id * 10 + c.category)::text, 12, '0'))::uuid as id,
+    pm.id as match_id,
     c.category,
-    (2 + ((m.id + c.category) % 4))::int as quantity,
-    (((c.base_price + ((m.id * 37 + c.category * 83) % 290)) *
-      case when m.phase in ('semifinals','final') then 4 else 1 end))::numeric as price,
-    ('10000000-0000-4000-8000-' || lpad(((((m.id + c.category * 7 - 1) % 30) + 1))::text, 12, '0'))::uuid as seller_id,
-    (100 + ((m.id * 3 + c.category * 11) % 430))::text as sector,
-    ((1 + ((m.id * 5 + c.category * 3) % 24))::text || ', ' ||
-      (2 + ((m.id * 5 + c.category * 3) % 24))::text || ', ' ||
-      (3 + ((m.id * 5 + c.category * 3) % 24))::text) as seats
-  from matches m
+    (2 + ((pm.id + c.category) % 3))::int as quantity,
+    round((
+      (pm.cat1_anchor * c.multiplier) +
+      case
+        when pm.phase = 'groups' then ((pm.id * 17 + c.category * 23) % 55)
+        when pm.phase in ('round32','round16','round_of_16','r16','quarterfinals','third_place') then ((pm.id * 29 + c.category * 37) % 120)
+        else ((pm.id * 53 + c.category * 71) % 420)
+      end
+    ) / 10) * 10 as price,
+    ('10000000-0000-4000-8000-' || lpad(((((pm.id + c.category * 7 - 1) % 30) + 1))::text, 12, '0'))::uuid as seller_id,
+    (100 + ((pm.id * 3 + c.category * 11) % 430))::text as sector,
+    ((1 + ((pm.id * 5 + c.category * 3) % 24))::text || ', ' ||
+      (2 + ((pm.id * 5 + c.category * 3) % 24))::text || ', ' ||
+      (3 + ((pm.id * 5 + c.category * 3) % 24))::text) as seats
+  from priced_matches pm
   cross join cats c
 )
 insert into listings (
