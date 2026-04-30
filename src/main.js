@@ -447,7 +447,7 @@ function askQuantity(max, unitPrice = 0, currency = 'ARS') {
           <h2>Cantidad de entradas</h2>
           <p>Disponibles: ${Number(max)}. Elegí una cantidad para reservar.</p>
           <select id="quantityPrompt" class="select" onchange="window.appActions.updateQuantityTotal(${Number(unitPrice || 0)}, '${currency}')">${options.map(value => `<option value="${value}">${value}</option>`).join('')}</select>
-          <div id="quantityTotal" class="quantity-total">${money(unitPrice, currency)} x 1 = ${money(unitPrice, currency)}</div>
+          <div id="quantityTotal" class="quantity-total">${Number(unitPrice || 0) > 0 ? `${money(unitPrice, currency)} x 1 = ${money(unitPrice, currency)}` : 'Intercambio 1 a 1: elegí cuántas entradas querés intercambiar.'}</div>
           <div class="footer-actions">
             <button class="secondary-btn" onclick="window.appActions.closeMessageModal(null)">Cancelar</button>
             <button class="pill-btn primary" onclick="window.appActions.resolveQuantityPrompt()">Continuar</button>
@@ -845,16 +845,16 @@ function listingForm(prefMatchId='', listing = null) {
       ${matchPicker('sellMatch', 'Partido de tu entrada', selectedMatchId)}
       <div class="field"><label>Categoría</label><select id="sellCat" class="select">${[1,2,3,4].map(cat => `<option ${Number(listing?.category || 1) === cat ? 'selected' : ''}>${cat}</option>`).join('')}</select></div>
       <div class="field"><label>Cantidad</label><input id="sellQty" type="number" min="1" class="input" value="${Number(listing?.quantity || 1)}"></div>
-      <div class="field"><label>Precio por entrada</label><input id="sellPrice" type="number" class="input" placeholder="Ej: 390000" value="${listing?.price || ''}"></div>
+      <div class="field sale-only-field"><label>Precio por entrada</label><input id="sellPrice" type="number" class="input" placeholder="Ej: 390000" value="${listing?.price || ''}"></div>
       <div class="field"><label>Sector</label><input id="sellSector" class="input" placeholder="Ej: 120" value="${escapeHtml(listing?.sector || '')}"></div>
       <div class="field"><label>Asientos</label><input id="sellSeats" class="input" placeholder="Ej: 5, 6 y 7" value="${escapeHtml(listing?.seats || '')}"></div>
-      <div class="field"><label>Moneda</label><select id="sellCurrency" class="select"><option ${listing?.currency !== 'USD' ? 'selected' : ''}>ARS</option><option ${listing?.currency === 'USD' ? 'selected' : ''}>USD</option></select></div>
-      <div class="field"><label>Método de cobro</label><select id="payMethod" class="select">${['Alias','CBU','USD','Wallet'].map(method => `<option ${listing?.seller_payment_method === method ? 'selected' : ''}>${method}</option>`).join('')}</select></div>
-      <div class="field"><label>Alias / CBU / dato de cobro</label><input id="payValue" class="input" value="${escapeHtml(listing?.seller_payment_value || '')}"></div>
+      <div class="field sale-only-field"><label>Moneda</label><select id="sellCurrency" class="select"><option ${listing?.currency !== 'USD' ? 'selected' : ''}>ARS</option><option ${listing?.currency === 'USD' ? 'selected' : ''}>USD</option></select></div>
+      <div class="field sale-only-field"><label>Método de cobro</label><select id="payMethod" class="select">${['Alias','CBU','USD','Wallet'].map(method => `<option ${listing?.seller_payment_method === method ? 'selected' : ''}>${method}</option>`).join('')}</select></div>
+      <div class="field sale-only-field"><label>Alias / CBU / dato de cobro</label><input id="payValue" class="input" value="${escapeHtml(listing?.seller_payment_value || '')}"></div>
     </div>
     <div id="exchangeFields" style="display:${listing?.type === 'exchange' ? 'block' : 'none'};margin-top:14px">
-      ${matchPicker('exchangeMatchIds', 'Partidos que buscás', '', true)}
-      <div class="field" style="margin-top:14px"><label>Detalle adicional del intercambio</label><textarea id="exchangeTargets" rows="3" placeholder="Ej: Categoría 1 o 2, preferentemente cerca del sector 120">${escapeHtml(listing?.exchange_targets?.text || '')}</textarea></div>
+      ${matchPicker('exchangeMatchIds', 'Partido que querés recibir', listing?.exchange_targets?.match_ids?.[0] || '', false)}
+      <div class="operation-disclaimer">El intercambio es 1 a 1: publicás tus entradas e indicás qué partido querés recibir a cambio. No se pide precio ni datos de cobro.</div>
     </div>
     <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.createListing()">${listing ? 'Guardar cambios' : 'Publicar'}</button></div>`
 }
@@ -1536,6 +1536,7 @@ window.appActions = {
     state.view='match'
     updateRoute('home')
     render()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   },
   switchMatchTab(id){
     state.selectedMatchId = id
@@ -1543,6 +1544,7 @@ window.appActions = {
     state.view = 'match'
     updateRoute('home')
     render()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   },
   async closeMatchTab(id){
     state.openMatchTabs = state.openMatchTabs.filter(tabId => String(tabId) !== String(id))
@@ -1577,14 +1579,8 @@ window.appActions = {
     const match = state.matches.find(m => String(m.id) === String(id))
     if (!input || !selected || !match) return
     if (target === 'exchangeMatchIds') {
-      const ids = input.value ? input.value.split(',').filter(Boolean) : []
-      if (!ids.includes(String(id))) ids.push(String(id))
-      input.value = ids.join(',')
-      selected.innerHTML = ids.map(matchId => {
-        const item = state.matches.find(m => String(m.id) === String(matchId))
-        if (!item) return ''
-        return `<span class="match-chip">${flagImg(item.home_code, 'flag-mini')}${flagImg(item.away_code, 'flag-mini')} ${matchLabel(item)} <button type="button" onclick="window.appActions.removeExchangeMatch('${item.id}')">×</button></span>`
-      }).join('')
+      input.value = String(id)
+      selected.innerHTML = `<span class="match-chip">${flagImg(match.home_code, 'flag-mini')}${flagImg(match.away_code, 'flag-mini')} ${matchLabel(match)} <button type="button" onclick="window.appActions.removeExchangeMatch('${match.id}')">×</button></span>`
     } else {
       input.value = id
       selected.innerHTML = matchPickerOption(match, target)
@@ -1598,15 +1594,13 @@ window.appActions = {
     if (!input || !selected) return
     const ids = input.value.split(',').filter(value => value && String(value) !== String(id))
     input.value = ids.join(',')
-    selected.innerHTML = ids.length ? ids.map(matchId => {
-      const item = state.matches.find(m => String(m.id) === String(matchId))
-      if (!item) return ''
-      return `<span class="match-chip">${flagImg(item.home_code, 'flag-mini')}${flagImg(item.away_code, 'flag-mini')} ${matchLabel(item)} <button type="button" onclick="window.appActions.removeExchangeMatch('${item.id}')">×</button></span>`
-    }).join('') : '<span class="meta">Seleccioná uno o más partidos</span>'
+    selected.innerHTML = '<span class="meta">Seleccioná el partido que querés recibir</span>'
   },
   toggleExchangeFields(){
     const el = document.getElementById('exchangeFields')
-    el.style.display = document.getElementById('sellType').value === 'exchange' ? 'block' : 'none'
+    const isExchange = document.getElementById('sellType').value === 'exchange'
+    el.style.display = isExchange ? 'block' : 'none'
+    document.querySelectorAll('.sale-only-field').forEach(field => field.style.display = isExchange ? 'none' : 'block')
   },
   openListingModal(prefMatchId='', listingId=''){
     if (!state.user) { state.view='auth'; render(); return }
@@ -1621,16 +1615,17 @@ window.appActions = {
       document.body.appendChild(modal)
     }
     modal.innerHTML = openListingModalHtml(prefMatchId, listing)
+    this.toggleExchangeFields()
     if (listing?.type === 'exchange') {
       const ids = listing.exchange_targets?.match_ids?.map(String) || []
       const input = document.getElementById('exchangeMatchIds')
       const selected = document.getElementById('exchangeMatchIdsSelected')
-      if (input) input.value = ids.join(',')
-      if (selected) selected.innerHTML = ids.length ? ids.map(matchId => {
-        const item = state.matches.find(m => String(m.id) === String(matchId))
-        if (!item) return ''
-        return `<span class="match-chip">${flagImg(item.home_code, 'flag-mini')}${flagImg(item.away_code, 'flag-mini')} ${matchLabel(item)} <button type="button" onclick="window.appActions.removeExchangeMatch('${item.id}')">×</button></span>`
-      }).join('') : '<span class="meta">Seleccioná uno o más partidos</span>'
+      const firstId = ids[0] || ''
+      const item = state.matches.find(m => String(m.id) === String(firstId))
+      if (input) input.value = firstId
+      if (selected) selected.innerHTML = item
+        ? `<span class="match-chip">${flagImg(item.home_code, 'flag-mini')}${flagImg(item.away_code, 'flag-mini')} ${matchLabel(item)} <button type="button" onclick="window.appActions.removeExchangeMatch('${item.id}')">×</button></span>`
+        : '<span class="meta">Seleccioná el partido que querés recibir</span>'
     }
   },
   openSellerProfile(userId){
@@ -1654,20 +1649,21 @@ window.appActions = {
       const match = state.matches.find(m => String(m.id) === String(id))
       return match ? matchLabel(match) : null
     }).filter(Boolean)
+    if (type === 'exchange' && !exchangeMatchIds.length) return showMessage('Seleccioná el partido que querés recibir a cambio.', { title: 'Falta el partido buscado', tone: 'error' })
     const payload = {
       type,
       match_id: selectedMatch,
       category: Number(document.getElementById('sellCat').value),
       quantity: Number(document.getElementById('sellQty').value),
-      price: Number(document.getElementById('sellPrice').value || 0),
-      currency: document.getElementById('sellCurrency').value,
+      price: type === 'exchange' ? 0 : Number(document.getElementById('sellPrice').value || 0),
+      currency: type === 'exchange' ? 'USD' : document.getElementById('sellCurrency').value,
       seller_id: state.user.id,
       status:'active',
-      seller_payment_method: document.getElementById('payMethod').value,
-      seller_payment_value: document.getElementById('payValue').value,
+      seller_payment_method: type === 'exchange' ? null : document.getElementById('payMethod').value,
+      seller_payment_value: type === 'exchange' ? null : document.getElementById('payValue').value,
       sector: document.getElementById('sellSector').value.trim(),
       seats: document.getElementById('sellSeats').value.trim(),
-      exchange_targets: type==='exchange' ? { match_ids: exchangeMatchIds, matches: exchangeMatches, text: document.getElementById('exchangeTargets').value } : null
+      exchange_targets: type==='exchange' ? { match_ids: exchangeMatchIds.slice(0, 1), matches: exchangeMatches.slice(0, 1), text: '' } : null
     }
     const request = editingId
       ? supabase.from('listings').update(payload).eq('id', editingId).eq('seller_id', state.user.id)
@@ -1720,11 +1716,19 @@ window.appActions = {
     if (!state.user) { state.view='auth'; render(); return }
     if (!canOperate()) return showMessage('Para intercambiar entradas primero tenés que completar la verificación de identidad y esperar la aprobación.', { title: 'Verificación requerida', tone: 'error' })
     const l = state.listings.find(x=>x.id===listingId)
+    if (!l || l.status !== 'active' || Number(l.quantity || 0) <= 0) return showMessage('Esta oferta de intercambio ya no tiene entradas disponibles.', { title: 'Sin disponibilidad', tone: 'error' })
     if (l.seller_id === state.user.id) return showMessage('No podés ofertar sobre tu propia publicación.', { title: 'Operación no permitida' })
+    const qty = Number(await askQuantity(l.quantity, 0, l.currency || 'USD'))
+    if (!qty) return
+    if (qty > Number(l.quantity)) return showMessage('No hay suficientes entradas disponibles para intercambiar.', { title: 'Cantidad no disponible', tone: 'error' })
+    const accepted = await showMessage(`Vas a ofrecer un intercambio 1 a 1 por ${qty} entrada${qty === 1 ? '' : 's'}. Ambas partes deberán enviar sus entradas a ${PLATFORM_TRANSFER_EMAIL}; el administrador libera el intercambio cuando verifique ambos lotes.`, { title: 'Confirmar intercambio', tone: 'info' })
+    if (!accepted) return
+    showLoading('Creando oferta de intercambio...')
     const { data, error } = await insertOrderWithFallback({
-      listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:1,total:0,status:'exchange_pending',
+      listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:qty,total:0,status:'exchange_pending',
       seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', admin_buyer_delivery_status:'pending'
     })
+    hideLoading()
     if (error) await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
     else {
       await addSystemMessage(data.id, `Recordatorio de seguridad: ambas partes deben enviar sus entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador verificará ambos lotes antes de liberar el intercambio.`)
@@ -1891,7 +1895,9 @@ window.appActions = {
   updateQuantityTotal(unitPrice, currency){
     const qty = Number(document.getElementById('quantityPrompt')?.value || 1)
     const total = document.getElementById('quantityTotal')
-    if (total) total.textContent = `${money(unitPrice, currency)} x ${qty} = ${money(unitPrice * qty, currency)}`
+    if (total) total.textContent = Number(unitPrice || 0) > 0
+      ? `${money(unitPrice, currency)} x ${qty} = ${money(unitPrice * qty, currency)}`
+      : `Intercambio 1 a 1 por ${qty} entrada${qty === 1 ? '' : 's'}.`
   },
   resolveQuantityPrompt(){
     const input = document.getElementById('quantityPrompt')
@@ -1990,7 +1996,8 @@ window.appActions = {
     render()
   },
   async completeExchange(id){
-    const order = state.orders.find(o => o.id === id)
+    const order = state.orders.find(o => o.id === id) || (await supabase.from('orders').select('*').eq('id', id).maybeSingle()).data
+    if (!order || order.status === 'completed') return
     showLoading('Liberando intercambio...')
     const { error } = await supabase.from('orders').update({
       status:'completed',
@@ -2000,6 +2007,11 @@ window.appActions = {
       admin_buyer_delivery_status:'received_by_admin'
     }).eq('id', id)
     if (error) { hideLoading(); return showMessage(error.message, { title: 'No se pudo completar', tone: 'error' }) }
+    const listing = state.listings.find(l => l.id === order.listing_id) || (await supabase.from('listings').select('*').eq('id', order.listing_id).maybeSingle()).data
+    if (listing) {
+      const nextQty = Math.max(0, Number(listing.quantity || 0) - Number(order.quantity || 1))
+      await supabase.from('listings').update({ quantity: nextQty, status: nextQty <= 0 ? 'sold' : 'active' }).eq('id', listing.id)
+    }
     await addSystemMessage(id, 'Intercambio completado. El administrador liberó ambos lotes a las partes correspondientes.')
     await notifyUsers([
       { user_id:order?.seller_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado', action:{ view:'order', id } },
