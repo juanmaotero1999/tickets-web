@@ -519,20 +519,64 @@ function sellView(prefMatchId='') {
 
 function profileView() {
   const p = state.profile || {}
-  const fields = [
-    ['first_name','Nombre'],['last_name','Apellido'],['birth_date','Fecha de nacimiento'],['nationality','Nacionalidad'],
-    ['document_type','Tipo de documento'],['document_number','Número de documento'],['document_country','País emisión documento'],
-    ['sex','Sexo'],['phone','Teléfono'],['country','País'],['state','Provincia/Estado'],['city','Ciudad'],
-    ['address','Dirección'],['timezone','Timezone'],['preferred_language','Idioma preferido'],['preferred_currency','Divisa preferida']
-  ]
-  return `<div class="container"><div class="panel"><h2>Mi perfil</h2><p class="meta">Completá tus datos para operar con mayor seguridad.</p>
-    <div class="form-grid">
-      ${fields.map(([k,label])=>`<div class="field"><label>${label}</label><input class="input" id="profile_${k}" value="${p[k] || ''}"></div>`).join('')}
-      <div class="field"><label>2FA habilitado</label><select id="profile_two_factor_enabled" class="select"><option value="false" ${!p.two_factor_enabled?'selected':''}>NO</option><option value="true" ${p.two_factor_enabled?'selected':''}>SÍ</option></select></div>
-      <div class="field"><label>Estado verificación</label><input disabled class="input" value="${p.verification_status || 'not_verified'}"></div>
+  const personalFields = [['first_name','Nombre'],['last_name','Apellido'],['birth_date','Fecha de nacimiento'],['nationality','Nacionalidad'],['sex','Sexo']]
+  const documentFields = [['document_type','Tipo de documento'],['document_number','Número de documento'],['document_country','País emisión documento']]
+  const contactFields = [['phone','Teléfono'],['country','País'],['state','Provincia/Estado'],['city','Ciudad'],['address','Dirección']]
+  const preferenceFields = [['timezone','Timezone'],['preferred_language','Idioma preferido'],['preferred_currency','Divisa preferida']]
+  const fieldHtml = (fields) => fields.map(([k,label])=>`<div class="field"><label>${label}</label><input class="input" id="profile_${k}" value="${escapeHtml(p[k] || '')}"></div>`).join('')
+  return `<div class="container">
+    <div class="profile-header">
+      <div class="avatar-frame">${p.avatar_url ? `<img src="${escapeHtml(p.avatar_url)}" alt="Foto de perfil">` : `<span>${escapeHtml((p.first_name || state.user?.email || 'U').slice(0,1).toUpperCase())}</span>`}</div>
+      <div>
+        <h1>Mi perfil</h1>
+        <p class="meta">Completá tus datos y verificá tu identidad para operar con mayor confianza.</p>
+        <span class="badge ${p.verification_status === 'verified' ? 'ok' : 'warn'}">${p.verification_status === 'verified' ? 'Cuenta verificada' : 'Verificación pendiente'}</span>
+      </div>
     </div>
-    <br><button class="pill-btn primary" onclick="window.appActions.saveProfile()">Guardar perfil</button>
-  </div></div>`
+    <div class="profile-grid">
+      <section class="profile-module">
+        <h2>Identidad</h2>
+        <div class="form-grid">${fieldHtml(personalFields)}</div>
+      </section>
+      <section class="profile-module">
+        <h2>Documento</h2>
+        <div class="form-grid">${fieldHtml(documentFields)}</div>
+        <div class="document-warning">
+          Podés tapar datos sensibles que no necesitamos, como número de trámite o códigos secundarios. Para verificar tu cuenta usamos foto, nombre y número de DNI/documento.
+        </div>
+        <div class="upload-row">
+          <label class="upload-card">
+            <input type="file" accept="image/*,.pdf" onchange="window.appActions.uploadProfileFile('document', this)">
+            <strong>Subir documento</strong>
+            <span>${p.identity_document_path ? `Documento recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB'}</span>
+          </label>
+        </div>
+      </section>
+      <section class="profile-module">
+        <h2>Foto de perfil</h2>
+        <div class="upload-row">
+          <label class="upload-card">
+            <input type="file" accept="image/*" onchange="window.appActions.uploadProfileFile('avatar', this)">
+            <strong>Subir foto</strong>
+            <span>JPG, PNG o WebP. Se muestra en tu perfil público.</span>
+          </label>
+        </div>
+      </section>
+      <section class="profile-module">
+        <h2>Contacto</h2>
+        <div class="form-grid">${fieldHtml(contactFields)}</div>
+      </section>
+      <section class="profile-module">
+        <h2>Preferencias y seguridad</h2>
+        <div class="form-grid">
+          ${fieldHtml(preferenceFields)}
+          <div class="field"><label>2FA habilitado</label><select id="profile_two_factor_enabled" class="select"><option value="false" ${!p.two_factor_enabled?'selected':''}>NO</option><option value="true" ${p.two_factor_enabled?'selected':''}>SÍ</option></select></div>
+          <div class="field"><label>Estado verificación</label><input disabled class="input" value="${p.verification_status || 'not_verified'}"></div>
+        </div>
+      </section>
+    </div>
+    <div class="profile-save"><button class="pill-btn primary" onclick="window.appActions.saveProfile()">Guardar perfil</button></div>
+  </div>`
 }
 
 function myView() {
@@ -836,6 +880,40 @@ window.appActions = {
     const { error } = await supabase.from('users').upsert(payload)
     if (error) await showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
     else { await showMessage('Tus datos fueron actualizados.', { title: 'Perfil actualizado', tone: 'success' }); await ensureProfile(); render() }
+  },
+  async uploadProfileFile(kind, input){
+    const file = input.files?.[0]
+    if (!file || !state.user) return
+    if (file.size > 8 * 1024 * 1024) {
+      input.value = ''
+      return showMessage('El archivo no puede superar los 8 MB.', { title: 'Archivo demasiado grande', tone: 'error' })
+    }
+    if (kind === 'document') {
+      await showMessage('Antes de subirlo, podés tapar datos sensibles como número de trámite, códigos secundarios o información que no sea necesaria. Para verificar usamos foto, nombre y número de DNI/documento.', { title: 'Protegé tus datos', tone: 'info' })
+    }
+    const bucket = kind === 'avatar' ? 'profile-photos' : 'identity-documents'
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+    const path = `${state.user.id}/${kind}-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert:false, contentType:file.type })
+    if (error) {
+      input.value = ''
+      return showMessage(error.message, { title: 'No se pudo subir el archivo', tone: 'error' })
+    }
+    const payload = { id:state.user.id, email:state.user.email }
+    if (kind === 'avatar') {
+      const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+      payload.avatar_url = data.publicUrl
+    } else {
+      payload.identity_document_path = path
+      payload.identity_document_status = 'pending_review'
+      payload.identity_document_uploaded_at = new Date().toISOString()
+      payload.verification_status = 'pending_review'
+    }
+    const { error:updateError } = await supabase.from('users').upsert(payload)
+    if (updateError) return showMessage(updateError.message, { title: 'No se pudo actualizar el perfil', tone: 'error' })
+    await ensureProfile()
+    await showMessage(kind === 'avatar' ? 'Tu foto de perfil fue actualizada.' : 'Documento recibido. Lo revisaremos para verificar tu cuenta.', { title: kind === 'avatar' ? 'Foto actualizada' : 'Verificación en revisión', tone: 'success' })
+    render()
   },
   async openOrder(id){ await openOrder(id) },
   closeModal(){ document.getElementById('modalRoot')?.remove(); state.selectedOrder=null },

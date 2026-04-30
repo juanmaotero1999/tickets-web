@@ -63,22 +63,22 @@ body.dark .topbar{background:rgba(9,11,16,.78)}
 .phase-title h2{font-size:30px;margin:0;letter-spacing:-.05em;display:flex;align-items:center;gap:10px}
 .phase-title h2:before{content:"";width:12px;height:30px;border-radius:999px;background:linear-gradient(180deg,var(--green),var(--cyan),var(--pink))}
 .phase-badge{background:#07080d;color:white;border:1px solid rgba(255,255,255,.12)}
-.match-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
-.match-card{background:var(--card);border:1px solid var(--line);border-radius:28px;padding:20px;box-shadow:var(--shadow);display:grid;grid-template-columns:92px 1fr;gap:18px;transition:.2s ease;min-height:210px}
+.match-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.match-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;box-shadow:var(--shadow);display:grid;grid-template-columns:64px 1fr;gap:14px;transition:.2s ease;min-height:168px}
 .match-card:hover{transform:translateY(-3px);border-color:rgba(22,243,155,.7)}
-.match-number{width:84px;height:84px;border-radius:24px;background:#07080d;color:white;display:grid;place-items:center;font-size:40px;font-weight:950;letter-spacing:-.07em}
-.match-info h3{font-size:28px;line-height:1.05;margin:0 0 10px;letter-spacing:-.05em}
+.match-number{width:60px;height:60px;border-radius:16px;background:#07080d;color:white;display:grid;place-items:center;font-size:30px;font-weight:950;letter-spacing:-.07em}
+.match-info h3{font-size:22px;line-height:1.05;margin:0 0 8px;letter-spacing:-.04em}
 .teams-line{display:flex;flex-direction:column;gap:8px}
 .team-chip{display:flex;align-items:center;gap:10px;min-width:0}
 .team-chip span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .vs-text{font-size:14px;line-height:1;color:var(--muted);font-weight:950;text-transform:uppercase;letter-spacing:.08em}
-.flag-thumb{width:38px;height:26px;border-radius:6px;object-fit:cover;flex:0 0 auto;box-shadow:0 4px 12px rgba(16,24,40,.18);border:1px solid rgba(0,0,0,.08);background:var(--bg)}
+.flag-thumb{width:32px;height:22px;border-radius:5px;object-fit:cover;flex:0 0 auto;box-shadow:0 4px 12px rgba(16,24,40,.18);border:1px solid rgba(0,0,0,.08);background:var(--bg)}
 .flag-mini{width:24px;height:16px;border-radius:4px;object-fit:cover;flex:0 0 auto;box-shadow:0 2px 8px rgba(16,24,40,.16);border:1px solid rgba(0,0,0,.08);background:var(--bg)}
 .flag-large{width:min(190px,34vw);aspect-ratio:16/10;height:auto;border-radius:14px;object-fit:cover;box-shadow:0 18px 48px rgba(16,24,40,.2);border:1px solid rgba(0,0,0,.08);background:var(--bg)}
 .flag-placeholder{display:inline-block;background:linear-gradient(135deg,var(--line),var(--bg));box-shadow:none}
-.meta{color:var(--muted);font-size:15px;font-weight:700;line-height:1.4}
-.match-actions{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
-.price-btn{padding:13px 18px;border-radius:18px;background:var(--accent-2);font-weight:950;color:white;min-width:150px}
+.meta{color:var(--muted);font-size:14px;font-weight:700;line-height:1.35}
+.match-actions{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.price-btn{padding:11px 14px;border-radius:14px;background:var(--accent-2);font-weight:950;color:white;min-width:126px}
 .secondary-btn{padding:12px 16px;border-radius:16px;background:var(--bg);border:1px solid var(--line);font-weight:800;color:var(--text)}
 .match-workspace{display:flex;flex-direction:column;gap:14px}
 .match-toolbar{position:sticky;top:82px;z-index:20;display:flex;align-items:center;gap:12px;background:rgba(238,241,245,.86);backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:22px;padding:10px;box-shadow:0 12px 30px rgba(16,24,40,.08)}
@@ -102,6 +102,22 @@ body.dark .match-toolbar{background:rgba(9,11,16,.86)}
 .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:28px;padding:24px;box-shadow:var(--shadow)}
 .panel h2,.panel h3{margin-top:0;letter-spacing:-.04em}
+.profile-header{display:flex;align-items:center;gap:18px;margin-bottom:22px}
+.profile-header h1{margin:0 0 6px;letter-spacing:-.05em}
+.avatar-frame{width:92px;height:92px;border-radius:28px;background:var(--card);border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;box-shadow:var(--shadow);flex:0 0 auto}
+.avatar-frame img{width:100%;height:100%;object-fit:cover}
+.avatar-frame span{font-size:42px;font-weight:950;color:var(--accent-2)}
+.profile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.profile-module{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:22px;box-shadow:0 10px 28px rgba(16,24,40,.07)}
+.profile-module h2{margin:0 0 16px;letter-spacing:-.04em}
+.document-warning{margin-top:14px;padding:14px;border-radius:16px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-weight:800;line-height:1.45}
+body.dark .document-warning{background:rgba(245,165,36,.12);border-color:rgba(245,165,36,.35);color:#f7c76b}
+.upload-row{margin-top:14px}
+.upload-card{display:flex;flex-direction:column;gap:5px;border:1px dashed var(--line);border-radius:18px;background:var(--bg);padding:18px;cursor:pointer}
+.upload-card input{display:none}
+.upload-card strong{font-weight:950}
+.upload-card span{color:var(--muted);font-weight:750;font-size:14px}
+.profile-save{display:flex;justify-content:flex-end;margin-top:18px}
 .auth-shell{max-width:560px;margin:0 auto}
 .auth-panel{display:flex;flex-direction:column;gap:16px}
 .auth-actions{display:flex;margin-top:4px}
@@ -162,7 +178,7 @@ body.dark .item{background:rgba(255,255,255,.03)}
 .admin-table td:last-child,.admin-table th:last-child{border-right:1px solid var(--line);border-radius:0 16px 16px 0}
 @media(max-width:1000px){
   .hero,.grid-2{grid-template-columns:1fr}
-  .match-grid,.grid-3{grid-template-columns:1fr}
+  .match-grid,.grid-3,.profile-grid{grid-template-columns:1fr}
   .filters{grid-template-columns:1fr}
   .match-card{grid-template-columns:76px 1fr}
   .match-toolbar{top:76px;align-items:stretch;flex-direction:column}
@@ -171,4 +187,5 @@ body.dark .item{background:rgba(255,255,255,.03)}
   .match-center{order:2}
   .team-large h2{font-size:28px}
   .flag-large{width:min(220px,70vw)}
+  .profile-header{align-items:flex-start}
 }
