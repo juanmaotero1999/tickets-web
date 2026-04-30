@@ -221,6 +221,7 @@ const countryOptionsHtml = (selected = '') => countryOptionRows().map(([code, na
   ? `<option disabled>${name}</option>`
   : `<option value="${code}" ${String(selected || '') === code || String(selected || '').toLowerCase() === name.toLowerCase() ? 'selected' : ''}>${name}</option>`
 ).join('')
+const appCountryName = (value = '') => countryRows.find(([code, name]) => code === value || name.toLowerCase() === String(value || '').toLowerCase())?.[1] || value || ''
 const phoneOptionsHtml = (selected = '+54') => countryOptionRows().map(([code, name, dial, disabled]) => disabled
   ? `<option disabled>${name}</option>`
   : `<option value="${dial}" ${String(selected || '') === dial ? 'selected' : ''}>${name} ${dial}</option>`
@@ -233,6 +234,9 @@ const phoneParts = (value = '') => {
 const languageOptionsHtml = (selected = 'es') => [
   ['es','Español'],['en','Inglés'],['pt','Portugués']
 ].map(([value,label]) => `<option value="${value}" ${String(selected || '').toLowerCase().startsWith(value) ? 'selected' : ''}>${label}</option>`).join('')
+const sexOptionsHtml = (selected = '') => [
+  ['','Seleccionar'],['masculino','Masculino'],['femenino','Femenino']
+].map(([value,label]) => `<option value="${value}" ${String(selected || '').toLowerCase() === value ? 'selected' : ''}>${label}</option>`).join('')
 const formatOffset = (timeZone) => {
   try {
     const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName:'shortOffset' }).formatToParts(new Date())
@@ -1020,6 +1024,19 @@ function sellerProfileModalHtml(userId) {
   const u = userProfile(userId)
   const reviews = sellerReviews(userId)
   const rating = Number(u.seller_rating || 0)
+  const publications = state.listings
+    .filter(l => l.seller_id === userId && l.status === 'active' && Number(l.quantity || 0) > 0)
+    .sort((a,b) => String(a.type || '').localeCompare(String(b.type || '')) || Number(a.price || 0) - Number(b.price || 0))
+  const publicationHtml = publications.map(l => {
+    const m = state.matches.find(match => Number(match.id) === Number(l.match_id)) || {}
+    return `<div class="seller-publication">
+      <div>
+        <strong>${l.type === 'exchange' ? 'Intercambio' : 'Venta'} · ${escapeHtml(matchLabel(m) || `Partido #${l.match_id}`)}</strong>
+        <p class="meta">Categoría ${escapeHtml(l.category || '-')} · ${Number(l.quantity || 0)} disponible${Number(l.quantity || 0) === 1 ? '' : 's'}${l.sector ? ` · Sector ${escapeHtml(l.sector)}` : ''}${l.seats ? ` · Asientos ${escapeHtml(l.seats)}` : ''}</p>
+      </div>
+      <span class="seller-publication-price">${l.type === 'exchange' ? 'Intercambio' : money(l.price || 0, l.currency || 'ARS')}</span>
+    </div>`
+  }).join('')
   return `
     <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
       <div class="modal seller-modal">
@@ -1029,7 +1046,7 @@ function sellerProfileModalHtml(userId) {
             ${avatarHtml(userId, 'seller-avatar large')}
             <div>
               <h2>${escapeHtml(userName(userId))} ${verificationBadgeHtml(u.verification_status === 'verified')}</h2>
-              <p class="meta">${u.verification_status === 'verified' ? 'Cuenta verificada' : 'Cuenta no verificada'}${u.city ? ` · ${escapeHtml(u.city)}` : ''}</p>
+              <p class="meta">${u.verification_status === 'verified' ? 'Cuenta verificada' : 'Cuenta no verificada'}${u.city ? ` · ${escapeHtml(u.city)}` : ''}${u.country ? ` · ${escapeHtml(appCountryName(u.country))}` : ''}</p>
               <p>${starsHtml(rating)} <strong>${rating ? rating.toFixed(1) : 'Sin puntuación'}</strong></p>
               <p class="meta">${Number(u.seller_sales_count || 0)} transacciones positivas · ${Number(u.seller_reviews_count || 0)} reseñas</p>
             </div>
@@ -1037,6 +1054,10 @@ function sellerProfileModalHtml(userId) {
           <div class="seller-reviews">
             <h3>Reseñas</h3>
             ${reviews.length ? reviews.slice(0,5).map(r=>`<div class="review-text"><strong>${starsHtml(r.rating)} ${escapeHtml(userName(r.reviewer_id))}</strong><p>${escapeHtml(r.comment || 'Sin comentario')}</p></div>`).join('') : '<div class="empty">Este usuario todavía no tiene reseñas escritas.</div>'}
+          </div>
+          <div class="seller-reviews">
+            <h3>Publicaciones activas</h3>
+            ${publicationHtml || '<div class="empty">Este usuario no tiene publicaciones activas en este momento.</div>'}
           </div>
         </div>
       </div>
@@ -1055,7 +1076,8 @@ function profileView() {
   const fieldHtml = (fields, lockSensitive = false) => fields.map(([k,label])=>{
     const lockedAttr = lockSensitive ? lockedAttrs : ''
     if (k === 'birth_date') return `<div class="field"><label>${label}</label><input class="input" id="profile_${k}" type="date" lang="es-AR" value="${escapeHtml(p[k] ? String(p[k]).slice(0,10) : '')}" placeholder="dd/mm/aaaa" ${lockedAttr}><small class="field-hint">Seleccioná desde el calendario.</small></div>`
-    if (k === 'document_country' || k === 'country') return `<div class="field"><label>${label}</label><select class="select" id="profile_${k}" ${lockedAttr}>${countryOptionsHtml(p[k] || 'AR')}</select></div>`
+    if (k === 'nationality' || k === 'document_country' || k === 'country') return `<div class="field"><label>${label}</label><select class="select" id="profile_${k}" ${lockedAttr}>${countryOptionsHtml(p[k] || 'AR')}</select></div>`
+    if (k === 'sex') return `<div class="field"><label>Género</label><select class="select" id="profile_${k}" ${lockedAttr}>${sexOptionsHtml(p[k] || '')}</select></div>`
     if (k === 'phone') return `<div class="field full-field"><label>${label}</label><div class="phone-row"><select class="select phone-code" id="profile_phone_country_code">${phoneOptionsHtml(phone.code)}</select><input class="input" id="profile_phone" inputmode="tel" value="${escapeHtml(phone.number)}" placeholder="Número sin código de país"></div></div>`
     if (k === 'timezone') return `<div class="field"><label>${label}</label><select class="select" id="profile_${k}">${timeZoneOptionsHtml(p[k] || userTimeZone())}</select></div>`
     if (k === 'preferred_language') return `<div class="field"><label>${label}</label><select class="select" id="profile_${k}">${languageOptionsHtml(p[k] || 'es')}</select></div>`
@@ -1063,6 +1085,12 @@ function profileView() {
   }).join('')
   const fullName = `${p.first_name || ''} ${p.last_name || ''}`.trim()
   const uploadLockCopy = 'Cuenta verificada: este paso queda bloqueado para proteger tu identidad.'
+  const canUploadAvatar = !locked
+  const canUploadDocumentFront = !locked && Boolean(p.avatar_url)
+  const canUploadDocumentBack = !locked && Boolean(p.identity_document_path)
+  const canStartFace = !locked && Boolean(p.identity_document_path && p.identity_document_back_path)
+  const stepStatus = (done, enabled) => locked ? 'locked' : done ? 'done' : enabled ? 'active' : 'blocked'
+  const stepCopy = (done, enabled, readyText, blockedText) => locked ? uploadLockCopy : done ? readyText : enabled ? blockedText.ready : blockedText.locked
   return `<div class="container">
     <div class="profile-header">
       <div class="avatar-frame">${p.avatar_url ? `<img src="${escapeHtml(p.avatar_url)}" alt="Foto de perfil">` : `<span>${escapeHtml((p.first_name || state.user?.email || 'U').slice(0,1).toUpperCase())}</span>`}</div>
@@ -1084,22 +1112,22 @@ function profileView() {
         <div class="document-warning">
           El documento debe verse nítido y con buena luz. Podés tapar datos sensibles que no necesitamos, como número de trámite, códigos secundarios o domicilio. Deben quedar visibles foto, nombres y número de DNI/documento.
         </div>
-        <div class="verification-steps">
-          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('avatar')" ${locked ? 'disabled' : ''}>
+        <div class="verification-steps vertical">
+          <button class="upload-card step-${stepStatus(p.avatar_url, canUploadAvatar)}" type="button" onclick="window.appActions.openUploadModal('avatar')" ${canUploadAvatar ? '' : 'disabled'}>
             <strong>1. Foto de perfil</strong>
             <span>${locked ? uploadLockCopy : (p.avatar_url ? 'Foto cargada' : 'Buena luz, rostro visible, JPG/PNG/WebP hasta 8 MB.')}</span>
           </button>
-          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('documentFront')" ${locked ? 'disabled' : ''}>
+          <button class="upload-card step-${stepStatus(p.identity_document_path, canUploadDocumentFront)}" type="button" onclick="window.appActions.openUploadModal('documentFront')" ${canUploadDocumentFront ? '' : 'disabled'}>
             <strong>2. Documento frente</strong>
-            <span>${locked ? uploadLockCopy : (p.identity_document_path ? `Frente recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB')}</span>
+            <span>${stepCopy(p.identity_document_path, canUploadDocumentFront, `Frente recibido · ${p.identity_document_status || 'pending_review'}`, { ready:'Imagen o PDF, máximo 8 MB.', locked:'Primero cargá tu foto de perfil.' })}</span>
           </button>
-          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('documentBack')" ${locked ? 'disabled' : ''}>
+          <button class="upload-card step-${stepStatus(p.identity_document_back_path, canUploadDocumentBack)}" type="button" onclick="window.appActions.openUploadModal('documentBack')" ${canUploadDocumentBack ? '' : 'disabled'}>
             <strong>3. Documento dorso</strong>
-            <span>${locked ? uploadLockCopy : (p.identity_document_back_path ? `Dorso recibido · ${p.identity_document_back_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB')}</span>
+            <span>${stepCopy(p.identity_document_back_path, canUploadDocumentBack, `Dorso recibido · ${p.identity_document_back_status || 'pending_review'}`, { ready:'Imagen o PDF, máximo 8 MB.', locked:'Primero cargá el frente del documento.' })}</span>
           </button>
-          <button class="upload-card camera-card" type="button" onclick="window.appActions.startLivenessCheck()" ${locked ? 'disabled' : ''}>
+          <button class="upload-card camera-card step-${stepStatus(p.liveness_side_path && p.liveness_front_path, canStartFace)}" type="button" onclick="window.appActions.startLivenessCheck()" ${canStartFace ? '' : 'disabled'}>
             <strong>4. Reconocimiento facial</strong>
-            <span>${locked ? uploadLockCopy : (p.liveness_side_path && p.liveness_front_path ? `2 tomas recibidas · ${p.liveness_status || 'submitted'}` : 'Captura automática: perfil y frente.')}</span>
+            <span>${stepCopy(p.liveness_side_path && p.liveness_front_path, canStartFace, `2 tomas recibidas · ${p.liveness_status || 'submitted'}`, { ready:'Captura automática: perfil y frente.', locked:'Primero cargá frente y dorso del documento.' })}</span>
           </button>
         </div>
       </section>
@@ -2012,6 +2040,12 @@ window.appActions = {
     if (isVerified()) {
       return showMessage('Tu cuenta ya está verificada. Para proteger tu identidad, la foto de perfil, documento y reconocimiento facial quedan bloqueados.', { title: 'Cuenta verificada', tone: 'info' })
     }
+    if (kind === 'documentFront' && !state.profile?.avatar_url) {
+      return showMessage('Primero subí tu foto de perfil. Después se habilita la carga del frente del documento.', { title: 'Paso pendiente', tone: 'info' })
+    }
+    if (kind === 'documentBack' && !state.profile?.identity_document_path) {
+      return showMessage('Primero subí el frente del documento. Después se habilita el dorso.', { title: 'Paso pendiente', tone: 'info' })
+    }
     const isAvatar = kind === 'avatar'
     const isBack = kind === 'documentBack'
     const isDocument = kind === 'documentFront' || kind === 'documentBack' || kind === 'document'
@@ -2323,6 +2357,9 @@ window.appActions = {
     if (isVerified()) {
       return showMessage('Tu cuenta ya está verificada. El reconocimiento facial queda bloqueado para evitar cambios de identidad.', { title: 'Cuenta verificada', tone: 'info' })
     }
+    if (!state.profile?.identity_document_path || !state.profile?.identity_document_back_path) {
+      return showMessage('Para hacer el reconocimiento facial primero necesitás cargar frente y dorso del documento.', { title: 'Documentación pendiente', tone: 'info' })
+    }
     await showMessage('Vamos a tomar dos fotos automáticamente: primero con la cabeza girada levemente hacia un costado y después mirando al frente. Usá buena luz y mantené el rostro dentro del cuadro.', { title: 'Reconocimiento facial', tone: 'info' })
     if (!navigator.mediaDevices?.getUserMedia) return showMessage('Tu navegador no permite usar la cámara desde esta página.', { title: 'Cámara no disponible', tone: 'error' })
     let modal = document.getElementById('modalRoot')
@@ -2498,6 +2535,22 @@ window.appActions = {
     if (!u) return
     const value = (key) => escapeHtml(u[key] ?? '')
     const selected = (key, option) => String(u[key] ?? '') === option ? 'selected' : ''
+    const verificationFiles = [
+      ['Foto de perfil', u.avatar_url, '', true],
+      ['Documento frente', u.identity_document_path, 'identity-documents'],
+      ['Documento dorso', u.identity_document_back_path, 'identity-documents'],
+      ['Reconocimiento costado', u.liveness_side_path, 'verification-selfies'],
+      ['Reconocimiento frente', u.liveness_front_path || u.identity_selfie_path, 'verification-selfies']
+    ]
+    const verificationFilesHtml = verificationFiles.map(([label, path, bucket, isPublic]) => {
+      if (!path) return `<div class="verification-file-card missing"><strong>${label}</strong><span>No cargado</span></div>`
+      const safePath = escapeHtml(path)
+      return `<div class="verification-file-card">
+        <strong>${label}</strong>
+        ${isPublic ? `<img src="${safePath}" alt="${label}">` : '<span>Archivo privado guardado en Supabase</span>'}
+        ${isPublic ? '' : `<button class="secondary-btn" onclick="window.appActions.viewVerificationFile('${bucket}','${safePath}')">Ver archivo</button>`}
+      </div>`
+    }).join('')
     let modal = document.getElementById('modalRoot')
     if (!modal) {
       modal = document.createElement('div')
@@ -2521,6 +2574,8 @@ window.appActions = {
               <div class="field"><label>Apellido</label><input id="admin_last_name" class="input" value="${value('last_name')}"></div>
               <div class="field"><label>Email</label><input id="admin_email" class="input" value="${value('email')}"></div>
               <div class="field"><label>Rol</label><select id="admin_role" class="select"><option value="user" ${selected('role','user')}>Usuario</option><option value="admin" ${selected('role','admin')}>Admin</option></select></div>
+              <div class="field"><label>Nacionalidad</label><select id="admin_nationality" class="select">${countryOptionsHtml(u.nationality || 'AR')}</select></div>
+              <div class="field"><label>Género</label><select id="admin_sex" class="select">${sexOptionsHtml(u.sex || '')}</select></div>
               <div class="field"><label>Tipo documento</label><input id="admin_document_type" class="input" value="${value('document_type')}"></div>
               <div class="field"><label>Número documento</label><input id="admin_document_number" class="input" value="${value('document_number')}"></div>
               <div class="field"><label>País documento</label><select id="admin_document_country" class="select">${countryOptionsHtml(u.document_country || 'AR')}</select></div>
@@ -2538,6 +2593,11 @@ window.appActions = {
               <div class="field"><label>Cantidad de reseñas</label><input id="admin_seller_reviews_count" class="input" type="number" min="0" value="${Number(u.seller_reviews_count || 0)}"></div>
               <div class="field"><label>Rating vendedor</label><input id="admin_seller_rating" class="input" type="number" min="0" max="5" step="0.1" value="${Number(u.seller_rating || 0)}"></div>
             </div>
+            <div class="profile-module admin-verification-files">
+              <h3>Archivos de verificación guardados</h3>
+              <p class="meta">Estos son los archivos que el usuario cargó para verificar su identidad. Quedan asociados a su perfil para revisión futura.</p>
+              <div class="verification-file-grid">${verificationFilesHtml}</div>
+            </div>
             <div class="document-warning">Los cambios hechos por un administrador impactan inmediatamente en publicaciones, perfil y estado de verificación del usuario.</div>
             <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.saveAdminUser('${u.id}')">Guardar cambios</button></div>
           </div>
@@ -2547,7 +2607,7 @@ window.appActions = {
   async saveAdminUser(userId){
     if (!isAdmin()) return
     const currentUser = state.users.find(u => u.id === userId) || {}
-    const textFields = ['first_name','last_name','email','role','document_type','document_number','document_country','phone','country','state','city','verification_status']
+    const textFields = ['first_name','last_name','email','role','nationality','sex','document_type','document_number','document_country','phone','country','state','city','verification_status']
     const payload = {}
     textFields.forEach(k => payload[k] = document.getElementById(`admin_${k}`)?.value || '')
     payload.seller_sales_count = Number(document.getElementById('admin_seller_sales_count')?.value || 0)
