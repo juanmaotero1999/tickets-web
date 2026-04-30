@@ -18,6 +18,7 @@ let state = {
   notifications: [],
   theme: localStorage.getItem('theme') || 'light',
   authMode: 'login',
+  prefMatchId: '',
   selectedMatch: null,
   selectedMatchId: null,
   openMatchTabs: [],
@@ -100,6 +101,13 @@ const flagImg = (code, className = 'flag-thumb') => {
 
 const isAdmin = () => ADMIN_EMAILS.includes(state.user?.email) || state.profile?.role === 'admin'
 const isVerified = () => state.profile?.verification_status === 'verified'
+const canOperate = () => Boolean(state.user && isVerified())
+const verificationDisclaimer = () => state.user && !isVerified() ? `
+  <div class="verification-disclaimer">
+    <strong>Verificá tu identidad para operar</strong>
+    <span>Hasta que completes la verificación enviando la documentación solicitada y sea aprobada, no vas a poder comprar, vender ni intercambiar entradas.</span>
+    <button class="secondary-btn" onclick="window.appActions.setView('profile')">Ir a verificación</button>
+  </div>` : ''
 
 const sellerProfile = (sellerId) => state.users.find(u => u.id === sellerId) || {}
 const sellerName = (sellerId) => {
@@ -172,6 +180,26 @@ function showMessage(message, { title = 'Aviso', tone = 'info' } = {}) {
         </div>
       </div>`
   })
+}
+
+function showLoading(message = 'Cargando...') {
+  let root = document.getElementById('loadingRoot')
+  if (!root) {
+    root = document.createElement('div')
+    root.id = 'loadingRoot'
+    document.body.appendChild(root)
+  }
+  root.innerHTML = `
+    <div class="loading-backdrop">
+      <div class="loading-card">
+        <img src="/logo_fifa_2026_0.png" alt="Copa del Mundo" class="loading-cup">
+        <strong>${escapeHtml(message)}</strong>
+      </div>
+    </div>`
+}
+
+function hideLoading() {
+  document.getElementById('loadingRoot')?.remove()
 }
 
 function askQuantity(max) {
@@ -478,7 +506,7 @@ function matchDetail() {
   </div>`
 }
 
-function listingCard(l, canBuy) {
+function listingCard(l, canBuy, ownerView = false) {
   const exchangeTargets = l.exchange_targets?.matches?.length
     ? l.exchange_targets.matches.join(', ')
     : l.exchange_targets?.text
@@ -489,41 +517,67 @@ function listingCard(l, canBuy) {
     </div>
     <p class="meta">Vendedor: ${escapeHtml(sellerName(l.seller_id))} ${verifiedBadge(l.seller_id)}</p>
     <p class="meta">Cantidad: ${l.quantity} · ${l.price ? money(l.price,l.currency) : 'Sin precio'}${l.sector ? ` · Sector ${escapeHtml(l.sector)}` : ''}${l.seats ? ` · Asientos ${escapeHtml(l.seats)}` : ''} ${l.type==='exchange' && exchangeTargets ? `<br>Busca: ${escapeHtml(exchangeTargets)}`:''}</p>
-    ${canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`}
+    ${ownerView ? '<span class="badge ok">Activa</span>' : (canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`)}
   </div>`
 }
 
 function sellView(prefMatchId='') {
-  const mine = state.listings.filter(l=>l.seller_id === state.user?.id)
+  const mine = state.listings.filter(l=>l.seller_id === state.user?.id && l.status === 'active')
   return `
   <div class="container">
-    <div class="grid-2">
-      <div class="panel">
-        <h2>Publicar entrada</h2>
-        <div class="form-grid">
-          <div class="field"><label>Tipo</label><select id="sellType" class="select" onchange="window.appActions.toggleExchangeFields()"><option value="sale">Vender</option><option value="exchange">Intercambiar</option></select></div>
-          ${matchPicker('sellMatch', 'Partido de tu entrada', prefMatchId)}
-          <div class="field"><label>Categoría</label><select id="sellCat" class="select"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
-          <div class="field"><label>Cantidad</label><input id="sellQty" type="number" min="1" class="input" value="1"></div>
-          <div class="field"><label>Precio por entrada</label><input id="sellPrice" type="number" class="input" placeholder="Ej: 390000"></div>
-          <div class="field"><label>Sector</label><input id="sellSector" class="input" placeholder="Ej: 120"></div>
-          <div class="field"><label>Asientos</label><input id="sellSeats" class="input" placeholder="Ej: 5, 6 y 7"></div>
-          <div class="field"><label>Moneda</label><select id="sellCurrency" class="select"><option>ARS</option><option>USD</option></select></div>
-          <div class="field"><label>Método de cobro</label><select id="payMethod" class="select"><option>Alias</option><option>CBU</option><option>USD</option><option>Wallet</option></select></div>
-          <div class="field"><label>Alias / CBU / dato de cobro</label><input id="payValue" class="input"></div>
+    <div class="panel sell-dashboard">
+      <div class="section-head">
+        <div>
+          <h1>Vender / Intercambiar</h1>
+          <p class="meta">Acá ves únicamente tus publicaciones activas.</p>
         </div>
-        <div id="exchangeFields" style="display:none;margin-top:14px">
-          ${matchPicker('exchangeMatchIds', 'Partidos que buscás', '', true)}
-          <div class="field" style="margin-top:14px"><label>Detalle adicional del intercambio</label><textarea id="exchangeTargets" rows="3" placeholder="Ej: Categoría 1 o 2, preferentemente cerca del sector 120"></textarea></div>
-        </div>
-        <br><button class="pill-btn primary" onclick="window.appActions.createListing()">Publicar</button>
+        <button class="pill-btn primary" onclick="window.appActions.openListingModal('${prefMatchId || ''}')" ${canOperate() ? '' : 'disabled'}>Nueva publicación</button>
       </div>
-      <div class="panel">
-        <h2>Mis publicaciones</h2>
-        <div class="list">${mine.length ? mine.map(l=>listingCard(l,false)).join('') : `<div class="empty">Usted no tiene ninguna entrada a la venta o intercambio.</div>`}</div>
-      </div>
+      <div class="list">${mine.length ? mine.map(l=>listingCard(l,false,true)).join('') : `<div class="empty">No tenés publicaciones activas en este momento.</div>`}</div>
     </div>
   </div>`
+}
+
+function listingForm(prefMatchId='') {
+  return `
+    <div class="form-grid">
+      <div class="field"><label>Tipo</label><select id="sellType" class="select" onchange="window.appActions.toggleExchangeFields()"><option value="sale">Vender</option><option value="exchange">Intercambiar</option></select></div>
+      ${matchPicker('sellMatch', 'Partido de tu entrada', prefMatchId)}
+      <div class="field"><label>Categoría</label><select id="sellCat" class="select"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
+      <div class="field"><label>Cantidad</label><input id="sellQty" type="number" min="1" class="input" value="1"></div>
+      <div class="field"><label>Precio por entrada</label><input id="sellPrice" type="number" class="input" placeholder="Ej: 390000"></div>
+      <div class="field"><label>Sector</label><input id="sellSector" class="input" placeholder="Ej: 120"></div>
+      <div class="field"><label>Asientos</label><input id="sellSeats" class="input" placeholder="Ej: 5, 6 y 7"></div>
+      <div class="field"><label>Moneda</label><select id="sellCurrency" class="select"><option>ARS</option><option>USD</option></select></div>
+      <div class="field"><label>Método de cobro</label><select id="payMethod" class="select"><option>Alias</option><option>CBU</option><option>USD</option><option>Wallet</option></select></div>
+      <div class="field"><label>Alias / CBU / dato de cobro</label><input id="payValue" class="input"></div>
+    </div>
+    <div id="exchangeFields" style="display:none;margin-top:14px">
+      ${matchPicker('exchangeMatchIds', 'Partidos que buscás', '', true)}
+      <div class="field" style="margin-top:14px"><label>Detalle adicional del intercambio</label><textarea id="exchangeTargets" rows="3" placeholder="Ej: Categoría 1 o 2, preferentemente cerca del sector 120"></textarea></div>
+    </div>
+    <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.createListing()">Publicar</button></div>`
+}
+
+function verificationRejectReason(userId) {
+  return `
+    <div class="field rejection-reason">
+      <label>Motivo para el usuario</label>
+      <textarea id="verificationReason_${userId}" class="input" rows="3" placeholder="Ej: La imagen del documento no se ve nítida. Por favor volvé a subirla con mejor luz."></textarea>
+      <small>Este mensaje le aparecerá al usuario como notificación.</small>
+    </div>`
+}
+
+function openListingModalHtml(prefMatchId='') {
+  return `
+    <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
+      <div class="modal listing-modal">
+        <div class="modal-header"><h2>Nueva publicación</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+        <div class="modal-body">
+          ${listingForm(prefMatchId)}
+        </div>
+      </div>
+    </div>`
 }
 
 function profileView() {
@@ -723,7 +777,7 @@ function render() {
   if (state.view === 'my') body = myView()
   if (state.view === 'admin') body = adminView()
   if (state.view === 'notifications') body = notificationsView()
-  app.innerHTML = `<div class="app-shell">${nav()}${body}</div>`
+  app.innerHTML = `<div class="app-shell">${nav()}${verificationDisclaimer()}${body}</div>`
 }
 
 window.appActions = {
@@ -735,8 +789,21 @@ window.appActions = {
     state.prefMatchId = matchId
     state.view = view
     render()
+    if (view === 'sell' && matchId && canOperate()) setTimeout(() => this.openListingModal(matchId), 0)
   },
-  async logout(){ await supabase.auth.signOut(); state.view='home'; render() },
+  async logout(){
+    showLoading('Cerrando sesión...')
+    const { error } = await supabase.auth.signOut()
+    hideLoading()
+    if (error) return showMessage(error.message, { title: 'No se pudo salir', tone: 'error' })
+    state.session = null
+    state.user = null
+    state.profile = null
+    state.orders = []
+    state.notifications = []
+    state.view = 'home'
+    render()
+  },
   async oauthLogin(provider){
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
@@ -747,9 +814,16 @@ window.appActions = {
   async login(){
     const email = document.getElementById('loginEmail').value.trim()
     const password = document.getElementById('loginPass').value
+    showLoading('Iniciando sesión...')
     const { error } = await supabase.auth.signInWithPassword({ email, password })
+    hideLoading()
     if (error) await showMessage(error.message, { title: 'No se pudo ingresar', tone: 'error' })
-    else { state.view='home'; await init() }
+    else {
+      showLoading('Preparando tu cuenta...')
+      state.view='home'
+      await init()
+      hideLoading()
+    }
   },
   async register(){
     const email = document.getElementById('regEmail').value.trim()
@@ -856,8 +930,22 @@ window.appActions = {
     const el = document.getElementById('exchangeFields')
     el.style.display = document.getElementById('sellType').value === 'exchange' ? 'block' : 'none'
   },
+  openListingModal(prefMatchId=''){
+    if (!state.user) { state.view='auth'; render(); return }
+    if (!canOperate()) {
+      return showMessage('Para comprar, vender o intercambiar entradas primero tenés que completar la verificación de identidad y esperar la aprobación.', { title: 'Verificación requerida', tone: 'error' })
+    }
+    let modal = document.getElementById('modalRoot')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'modalRoot'
+      document.body.appendChild(modal)
+    }
+    modal.innerHTML = openListingModalHtml(prefMatchId)
+  },
   async createListing(){
     if (!state.user) return showMessage('Tenés que ingresar para publicar entradas.', { title: 'Ingresá a tu cuenta' })
+    if (!canOperate()) return showMessage('Tu cuenta debe estar verificada para publicar entradas.', { title: 'Verificación requerida', tone: 'error' })
     const type = document.getElementById('sellType').value
     const selectedMatch = Number(document.getElementById('sellMatch').value)
     if (!selectedMatch) return showMessage('Seleccioná el partido de tu entrada.', { title: 'Falta el partido', tone: 'error' })
@@ -883,10 +971,11 @@ window.appActions = {
     }
     const { error } = await supabase.from('listings').insert(payload)
     if (error) await showMessage(error.message, { title: 'No se pudo publicar', tone: 'error' })
-    else { await showMessage('Tu publicación ya está disponible en el marketplace.', { title: 'Publicación creada', tone: 'success' }); await loadAll(); render() }
+    else { this.closeVerificationModal(); await showMessage('Tu publicación ya está disponible en el marketplace.', { title: 'Publicación creada', tone: 'success' }); await loadAll(); render() }
   },
   async startBuy(listingId){
     if (!state.user) { state.view='auth'; render(); return }
+    if (!canOperate()) return showMessage('Para comprar entradas primero tenés que completar la verificación de identidad y esperar la aprobación.', { title: 'Verificación requerida', tone: 'error' })
     const l = state.listings.find(x=>x.id===listingId)
     if (l.seller_id === state.user.id) return showMessage('No podés comprar tus propias entradas.', { title: 'Operación no permitida' })
     const qty = Number(await askQuantity(l.quantity))
@@ -903,6 +992,7 @@ window.appActions = {
   },
   async startExchange(listingId){
     if (!state.user) { state.view='auth'; render(); return }
+    if (!canOperate()) return showMessage('Para intercambiar entradas primero tenés que completar la verificación de identidad y esperar la aprobación.', { title: 'Verificación requerida', tone: 'error' })
     const l = state.listings.find(x=>x.id===listingId)
     if (l.seller_id === state.user.id) return showMessage('No podés ofertar sobre tu propia publicación.', { title: 'Operación no permitida' })
     const { error } = await supabase.from('orders').insert({
@@ -1152,6 +1242,7 @@ window.appActions = {
               ${filePreview(frontUrl, 'Prueba de vida: frente')}
             </div>
             <div class="document-warning">Verificá que el documento sea nítido, que nombre y número coincidan con los datos del perfil, y que las dos tomas de vida correspondan a la misma persona.</div>
+            ${verificationRejectReason(u.id)}
             <div class="footer-actions"><button class="pill-btn danger" onclick="window.appActions.updateUserVerification('${u.id}','rejected')">Rechazar</button><button class="pill-btn primary" onclick="window.appActions.updateUserVerification('${u.id}','verified')">Verificar cuenta</button></div>
           </div>
         </div>
@@ -1229,6 +1320,7 @@ window.appActions = {
   },
   async saveAdminUser(userId){
     if (!isAdmin()) return
+    const currentUser = state.users.find(u => u.id === userId) || {}
     const textFields = ['first_name','last_name','email','role','document_type','document_number','document_country','phone','country','state','city','verification_status']
     const payload = {}
     textFields.forEach(k => payload[k] = document.getElementById(`admin_${k}`)?.value || '')
@@ -1245,18 +1337,39 @@ window.appActions = {
     }
     const { error } = await supabase.from('users').update(payload).eq('id', userId)
     if (error) return showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
+    if (payload.verification_status !== currentUser.verification_status && ['verified','rejected'].includes(payload.verification_status)) {
+      await supabase.from('notifications').insert({
+        user_id:userId,
+        message: payload.verification_status === 'verified'
+          ? 'Tu verificación fue aprobada. Ya podés comprar, vender e intercambiar entradas.'
+          : 'Tu verificación fue rechazada. Podés volver a cargar la documentación desde Mi perfil.'
+      })
+    }
     await loadAll()
     this.closeVerificationModal()
     await showMessage('Los datos del usuario fueron actualizados.', { title: 'Usuario actualizado', tone: 'success' })
     render()
   },
   async updateUserVerification(userId, status){
-    const { error } = await supabase.from('users').update({
+    const reason = document.getElementById(`verificationReason_${userId}`)?.value.trim() || ''
+    const updatePayload = {
       verification_status: status,
       identity_document_status: status === 'verified' ? 'approved' : 'rejected',
       liveness_status: status === 'verified' ? 'approved' : 'rejected'
-    }).eq('id', userId)
+    }
+    if (status === 'rejected') updatePayload.verification_rejection_reason = reason
+    if (status === 'verified') updatePayload.verification_rejection_reason = null
+    let { error } = await supabase.from('users').update(updatePayload).eq('id', userId)
+    if (error && error.message?.includes('verification_rejection_reason')) {
+      delete updatePayload.verification_rejection_reason
+      const retry = await supabase.from('users').update(updatePayload).eq('id', userId)
+      error = retry.error
+    }
     if (error) return showMessage(error.message, { title: 'No se pudo actualizar', tone: 'error' })
+    const message = status === 'verified'
+      ? 'Tu verificación fue aprobada. Ya podés comprar, vender e intercambiar entradas.'
+      : `Tu verificación fue rechazada.${reason ? ` Motivo: ${reason}` : ' Podés volver a cargar la documentación desde Mi perfil.'}`
+    await supabase.from('notifications').insert({ user_id:userId, message })
     await loadAll()
     this.closeVerificationModal()
     await showMessage(status === 'verified' ? 'Usuario verificado.' : 'Verificación rechazada.', { title: 'Estado actualizado', tone: 'success' })

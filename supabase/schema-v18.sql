@@ -135,6 +135,7 @@ alter table users add column if not exists liveness_side_path text;
 alter table users add column if not exists liveness_front_path text;
 alter table users add column if not exists identity_selfie_uploaded_at timestamp;
 alter table users add column if not exists liveness_status text default 'not_submitted';
+alter table users add column if not exists verification_rejection_reason text;
 alter table users alter column seller_rating drop default;
 alter table users add column if not exists role text default 'user';
 alter table users add column if not exists created_at timestamp default now();
