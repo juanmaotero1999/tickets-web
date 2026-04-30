@@ -71,9 +71,11 @@ body.dark .input:disabled,body.dark .select:disabled,body.dark textarea:disabled
 .phase-title h2{font-size:30px;margin:0;letter-spacing:-.05em;display:flex;align-items:center;gap:10px}
 .phase-title h2:before{content:"";width:12px;height:30px;border-radius:999px;background:linear-gradient(180deg,var(--green),var(--cyan),var(--pink))}
 .phase-badge{background:#07080d;color:white;border:1px solid rgba(255,255,255,.12)}
-.match-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.match-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .match-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;box-shadow:var(--shadow);display:grid;grid-template-columns:64px 1fr;gap:14px;transition:.2s ease;min-height:168px}
 .match-card:hover{transform:translateY(-3px);border-color:rgba(22,243,155,.7)}
+.match-card.no-offers{opacity:.56;filter:grayscale(.7);box-shadow:none}
+.match-card.no-offers:hover{transform:none;border-color:var(--line)}
 .match-number{width:60px;height:60px;border-radius:16px;background:#07080d;color:white;display:grid;place-items:center;font-size:30px;font-weight:950;letter-spacing:-.07em}
 .match-info h3{font-size:22px;line-height:1.05;margin:0 0 8px;letter-spacing:-.04em}
 .teams-line{display:flex;flex-direction:column;gap:8px}
@@ -87,6 +89,7 @@ body.dark .input:disabled,body.dark .select:disabled,body.dark textarea:disabled
 .meta{color:var(--muted);font-size:14px;font-weight:700;line-height:1.35}
 .match-actions{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
 .price-btn{padding:11px 14px;border-radius:14px;background:var(--accent-2);font-weight:950;color:white;min-width:126px}
+.price-btn:disabled{background:var(--muted);cursor:not-allowed}
 .secondary-btn{padding:12px 16px;border-radius:16px;background:var(--bg);border:1px solid var(--line);font-weight:800;color:var(--text)}
 .match-workspace{display:flex;flex-direction:column;gap:14px}
 .match-toolbar{position:sticky;top:82px;z-index:20;display:flex;align-items:center;gap:12px;background:rgba(238,241,245,.86);backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:22px;padding:10px;box-shadow:0 12px 30px rgba(16,24,40,.08)}
@@ -133,6 +136,7 @@ body.dark .document-warning{background:rgba(245,165,36,.12);border-color:rgba(24
 .upload-card span{color:var(--muted);font-weight:750;font-size:14px}
 .camera-card{min-height:100%;border-style:solid}
 .verified-badge{width:19px;height:19px;object-fit:contain;vertical-align:-4px;margin-left:5px;display:inline-block}
+.verified-label{color:#a6adbb;font-weight:900;margin-left:3px}
 .profile-save{display:flex;justify-content:flex-end;margin-top:18px}
 .upload-modal{max-width:560px}
 .upload-disclaimer{border:1px solid var(--line);background:var(--bg);border-radius:18px;padding:16px;margin-bottom:14px}
@@ -179,6 +183,7 @@ body.dark .document-warning{background:rgba(245,165,36,.12);border-color:rgba(24
 .item{border:1px solid var(--line);border-radius:20px;padding:16px;background:rgba(255,255,255,.55)}
 body.dark .item{background:rgba(255,255,255,.03)}
 .listing-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:8px}
+.listing-owner-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
 .seller-rating{white-space:nowrap;border-radius:999px;background:#ecfdf3;color:#067647;padding:6px 10px;font-size:12px;font-weight:950}
 .badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:900;background:var(--bg);color:var(--text)}
 .badge.ok{background:#dcfae6;color:#067647}
@@ -258,7 +263,7 @@ body.dark .item{background:rgba(255,255,255,.03)}
 body.dark .operation-disclaimer{background:rgba(89,217,255,.1);border-color:rgba(89,217,255,.28);color:#99e7ff}
 @media(max-width:1000px){
   .hero,.grid-2{grid-template-columns:1fr}
-  .match-grid,.grid-3,.profile-grid{grid-template-columns:1fr}
+  .grid-3,.profile-grid{grid-template-columns:1fr}
   .filters{grid-template-columns:1fr}
   .match-card{grid-template-columns:76px 1fr}
   .match-toolbar{top:76px;align-items:stretch;flex-direction:column}
@@ -275,4 +280,7 @@ body.dark .operation-disclaimer{background:rgba(89,217,255,.1);border-color:rgba
   .admin-title,.operation-head{flex-direction:column;align-items:stretch}
   .flow-grid{grid-template-columns:1fr}
   .notifications-popover{right:18px;top:96px}
+}
+@media(max-width:720px){
+  .match-grid{grid-template-columns:1fr}
 }

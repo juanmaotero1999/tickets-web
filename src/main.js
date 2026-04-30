@@ -146,6 +146,7 @@ const sellerName = (sellerId) => {
 }
 const verificationBadgeHtml = (verified) => verified ? '<img class="verified-badge" src="/verified-badge.png" alt="Cuenta verificada" loading="lazy">' : ''
 const verifiedBadge = (sellerId) => verificationBadgeHtml(sellerProfile(sellerId).verification_status === 'verified')
+const verifiedLabel = (sellerId) => sellerProfile(sellerId).verification_status === 'verified' ? `${verifiedBadge(sellerId)} <span class="verified-label">Verificado</span>` : ''
 const sellerReputation = (sellerId) => {
   const seller = sellerProfile(sellerId)
   const sales = Number(seller.seller_sales_count || 0)
@@ -385,6 +386,10 @@ function minPrice(matchId) {
   return money(min, c)
 }
 
+function hasActiveOffers(matchId) {
+  return state.listings.some(l => Number(l.match_id) === Number(matchId) && l.status === 'active' && Number(l.quantity || 0) > 0)
+}
+
 function setView(v) {
   state.view = v
   if (v !== 'match') {
@@ -499,8 +504,9 @@ function matchesHtml(matches) {
 
 function matchCard(m) {
   const price = minPrice(m.id)
+  const offers = hasActiveOffers(m.id)
   return `
-  <article class="match-card">
+  <article class="match-card ${offers ? '' : 'no-offers'}">
     <div class="match-number">${m.match_number || m.id}</div>
     <div class="match-info">
       <h3 class="teams-line">
@@ -512,7 +518,7 @@ function matchCard(m) {
       <div class="meta">📍 ${m.city || ''} - ${m.stadium || ''}</div>
       <div class="meta">🗓️ ${fmtDate(m.match_date)}</div>
       <div class="match-actions">
-        <button class="price-btn" onclick="window.appActions.openMatch('${m.id}')">${price ? `Desde ${price}` : 'Ver partido'}</button>
+        <button class="price-btn" onclick="window.appActions.openMatch('${m.id}')" ${offers ? '' : 'disabled'}>${offers ? (price ? `Desde ${price}` : 'Ver ofertas') : 'Sin ofertas'}</button>
         <button class="secondary-btn" onclick="window.appActions.requireLogin('sell','${m.id}')">Vender</button>
       </div>
     </div>
@@ -627,9 +633,9 @@ function listingCard(l, canBuy, ownerView = false) {
       <strong>${l.type==='exchange'?'Intercambio':'Venta'} · Categoría ${l.category}</strong>
       <span class="seller-rating">${sellerReputation(l.seller_id)}</span>
     </div>
-    <p class="meta">Vendedor: ${escapeHtml(sellerName(l.seller_id))} ${verifiedBadge(l.seller_id)}</p>
+    <p class="meta">Vendedor: ${escapeHtml(sellerName(l.seller_id))} ${verifiedLabel(l.seller_id)}</p>
     <p class="meta">Cantidad: ${l.quantity} · ${l.price ? money(l.price,l.currency) : 'Sin precio'}${l.sector ? ` · Sector ${escapeHtml(l.sector)}` : ''}${l.seats ? ` · Asientos ${escapeHtml(l.seats)}` : ''} ${l.type==='exchange' && exchangeTargets ? `<br>Busca: ${escapeHtml(exchangeTargets)}`:''}</p>
-    ${ownerView ? '<span class="badge ok">Activa</span>' : (canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`)}
+    ${ownerView ? `<div class="listing-owner-actions"><span class="badge ok">Activa</span><button class="secondary-btn" onclick="window.appActions.openListingModal('', '${l.id}')">Editar</button><button class="pill-btn danger" onclick="window.appActions.deleteListing('${l.id}')">Eliminar</button></div>` : (canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`)}
   </div>`
 }
 
@@ -650,25 +656,27 @@ function sellView(prefMatchId='') {
   </div>`
 }
 
-function listingForm(prefMatchId='') {
+function listingForm(prefMatchId='', listing = null) {
+  const selectedMatchId = listing?.match_id || prefMatchId || ''
   return `
+    <input id="editingListingId" type="hidden" value="${listing?.id || ''}">
     <div class="form-grid">
-      <div class="field"><label>Tipo</label><select id="sellType" class="select" onchange="window.appActions.toggleExchangeFields()"><option value="sale">Vender</option><option value="exchange">Intercambiar</option></select></div>
-      ${matchPicker('sellMatch', 'Partido de tu entrada', prefMatchId)}
-      <div class="field"><label>Categoría</label><select id="sellCat" class="select"><option>1</option><option>2</option><option>3</option><option>4</option></select></div>
-      <div class="field"><label>Cantidad</label><input id="sellQty" type="number" min="1" class="input" value="1"></div>
-      <div class="field"><label>Precio por entrada</label><input id="sellPrice" type="number" class="input" placeholder="Ej: 390000"></div>
-      <div class="field"><label>Sector</label><input id="sellSector" class="input" placeholder="Ej: 120"></div>
-      <div class="field"><label>Asientos</label><input id="sellSeats" class="input" placeholder="Ej: 5, 6 y 7"></div>
-      <div class="field"><label>Moneda</label><select id="sellCurrency" class="select"><option>ARS</option><option>USD</option></select></div>
-      <div class="field"><label>Método de cobro</label><select id="payMethod" class="select"><option>Alias</option><option>CBU</option><option>USD</option><option>Wallet</option></select></div>
-      <div class="field"><label>Alias / CBU / dato de cobro</label><input id="payValue" class="input"></div>
+      <div class="field"><label>Tipo</label><select id="sellType" class="select" onchange="window.appActions.toggleExchangeFields()"><option value="sale" ${listing?.type !== 'exchange' ? 'selected' : ''}>Vender</option><option value="exchange" ${listing?.type === 'exchange' ? 'selected' : ''}>Intercambiar</option></select></div>
+      ${matchPicker('sellMatch', 'Partido de tu entrada', selectedMatchId)}
+      <div class="field"><label>Categoría</label><select id="sellCat" class="select">${[1,2,3,4].map(cat => `<option ${Number(listing?.category || 1) === cat ? 'selected' : ''}>${cat}</option>`).join('')}</select></div>
+      <div class="field"><label>Cantidad</label><input id="sellQty" type="number" min="1" class="input" value="${Number(listing?.quantity || 1)}"></div>
+      <div class="field"><label>Precio por entrada</label><input id="sellPrice" type="number" class="input" placeholder="Ej: 390000" value="${listing?.price || ''}"></div>
+      <div class="field"><label>Sector</label><input id="sellSector" class="input" placeholder="Ej: 120" value="${escapeHtml(listing?.sector || '')}"></div>
+      <div class="field"><label>Asientos</label><input id="sellSeats" class="input" placeholder="Ej: 5, 6 y 7" value="${escapeHtml(listing?.seats || '')}"></div>
+      <div class="field"><label>Moneda</label><select id="sellCurrency" class="select"><option ${listing?.currency !== 'USD' ? 'selected' : ''}>ARS</option><option ${listing?.currency === 'USD' ? 'selected' : ''}>USD</option></select></div>
+      <div class="field"><label>Método de cobro</label><select id="payMethod" class="select">${['Alias','CBU','USD','Wallet'].map(method => `<option ${listing?.seller_payment_method === method ? 'selected' : ''}>${method}</option>`).join('')}</select></div>
+      <div class="field"><label>Alias / CBU / dato de cobro</label><input id="payValue" class="input" value="${escapeHtml(listing?.seller_payment_value || '')}"></div>
     </div>
-    <div id="exchangeFields" style="display:none;margin-top:14px">
+    <div id="exchangeFields" style="display:${listing?.type === 'exchange' ? 'block' : 'none'};margin-top:14px">
       ${matchPicker('exchangeMatchIds', 'Partidos que buscás', '', true)}
-      <div class="field" style="margin-top:14px"><label>Detalle adicional del intercambio</label><textarea id="exchangeTargets" rows="3" placeholder="Ej: Categoría 1 o 2, preferentemente cerca del sector 120"></textarea></div>
+      <div class="field" style="margin-top:14px"><label>Detalle adicional del intercambio</label><textarea id="exchangeTargets" rows="3" placeholder="Ej: Categoría 1 o 2, preferentemente cerca del sector 120">${escapeHtml(listing?.exchange_targets?.text || '')}</textarea></div>
     </div>
-    <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.createListing()">Publicar</button></div>`
+    <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.createListing()">${listing ? 'Guardar cambios' : 'Publicar'}</button></div>`
 }
 
 function verificationRejectReason(userId) {
@@ -680,13 +688,13 @@ function verificationRejectReason(userId) {
     </div>`
 }
 
-function openListingModalHtml(prefMatchId='') {
+function openListingModalHtml(prefMatchId='', listing = null) {
   return `
     <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
       <div class="modal listing-modal">
-        <div class="modal-header"><h2>Nueva publicación</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+        <div class="modal-header"><h2>${listing ? 'Editar publicación' : 'Nueva publicación'}</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
         <div class="modal-body">
-          ${listingForm(prefMatchId)}
+          ${listingForm(prefMatchId, listing)}
         </div>
       </div>
     </div>`
@@ -707,7 +715,7 @@ function profileView() {
     <div class="profile-header">
       <div class="avatar-frame">${p.avatar_url ? `<img src="${escapeHtml(p.avatar_url)}" alt="Foto de perfil">` : `<span>${escapeHtml((p.first_name || state.user?.email || 'U').slice(0,1).toUpperCase())}</span>`}</div>
       <div>
-        <h1>${escapeHtml(fullName || 'Mi perfil')} ${verificationBadgeHtml(locked)}</h1>
+        <h1>${escapeHtml(fullName || 'Mi perfil')} ${verificationBadgeHtml(locked)} ${locked ? '<span class="verified-label">Verificado</span>' : ''}</h1>
         <p class="meta">Completá tus datos y verificá tu identidad para operar con mayor confianza.</p>
         <span class="badge ${p.verification_status === 'verified' ? 'ok' : 'warn'}">${p.verification_status === 'verified' ? `Cuenta verificada ${verificationBadgeHtml(true)}` : 'Verificación pendiente'}</span>
       </div>
@@ -915,6 +923,7 @@ function renderModal() {
     <div class="footer-actions">
       ${!isExchange ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','admin_seller_delivery_status','received_by_admin','awaiting_buyer_payment')">Confirmar entradas recibidas y avisar pago</button><button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','buyer_delivery_status','released','completed')">Liberar entradas al comprador</button>` : ''}
       ${isExchange ? `<button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','admin_seller_delivery_status','received_by_admin','exchange_in_progress')">Recibí entradas de ${escapeHtml(seller)}</button><button class="pill-btn primary" onclick="window.appActions.updateOrderFlow('${o.id}','admin_buyer_delivery_status','received_by_admin','exchange_ready_to_release')">Recibí entradas de ${escapeHtml(buyer)}</button><button class="pill-btn primary" onclick="window.appActions.completeExchange('${o.id}')">Liberar ambos lotes</button>` : ''}
+      <button class="secondary-btn" onclick="window.appActions.updateOrder('${o.id}','cancelled')">Cancelar y devolver stock</button>
       <button class="pill-btn danger" onclick="window.appActions.updateOrder('${o.id}','issue')">Marcar problema</button>
     </div>` : ''
   const html = `
@@ -1159,22 +1168,35 @@ window.appActions = {
     const el = document.getElementById('exchangeFields')
     el.style.display = document.getElementById('sellType').value === 'exchange' ? 'block' : 'none'
   },
-  openListingModal(prefMatchId=''){
+  openListingModal(prefMatchId='', listingId=''){
     if (!state.user) { state.view='auth'; render(); return }
     if (!canOperate()) {
       return showMessage('Para comprar, vender o intercambiar entradas primero tenés que completar la verificación de identidad y esperar la aprobación.', { title: 'Verificación requerida', tone: 'error' })
     }
+    const listing = listingId ? state.listings.find(l => l.id === listingId && l.seller_id === state.user.id) : null
     let modal = document.getElementById('modalRoot')
     if (!modal) {
       modal = document.createElement('div')
       modal.id = 'modalRoot'
       document.body.appendChild(modal)
     }
-    modal.innerHTML = openListingModalHtml(prefMatchId)
+    modal.innerHTML = openListingModalHtml(prefMatchId, listing)
+    if (listing?.type === 'exchange') {
+      const ids = listing.exchange_targets?.match_ids?.map(String) || []
+      const input = document.getElementById('exchangeMatchIds')
+      const selected = document.getElementById('exchangeMatchIdsSelected')
+      if (input) input.value = ids.join(',')
+      if (selected) selected.innerHTML = ids.length ? ids.map(matchId => {
+        const item = state.matches.find(m => String(m.id) === String(matchId))
+        if (!item) return ''
+        return `<span class="match-chip">${flagImg(item.home_code, 'flag-mini')}${flagImg(item.away_code, 'flag-mini')} ${matchLabel(item)} <button type="button" onclick="window.appActions.removeExchangeMatch('${item.id}')">×</button></span>`
+      }).join('') : '<span class="meta">Seleccioná uno o más partidos</span>'
+    }
   },
   async createListing(){
     if (!state.user) return showMessage('Tenés que ingresar para publicar entradas.', { title: 'Ingresá a tu cuenta' })
     if (!canOperate()) return showMessage('Tu cuenta debe estar verificada para publicar entradas.', { title: 'Verificación requerida', tone: 'error' })
+    const editingId = document.getElementById('editingListingId')?.value || ''
     const type = document.getElementById('sellType').value
     const selectedMatch = Number(document.getElementById('sellMatch').value)
     if (!selectedMatch) return showMessage('Seleccioná el partido de tu entrada.', { title: 'Falta el partido', tone: 'error' })
@@ -1198,9 +1220,21 @@ window.appActions = {
       seats: document.getElementById('sellSeats').value.trim(),
       exchange_targets: type==='exchange' ? { match_ids: exchangeMatchIds, matches: exchangeMatches, text: document.getElementById('exchangeTargets').value } : null
     }
-    const { error } = await supabase.from('listings').insert(payload)
+    const request = editingId
+      ? supabase.from('listings').update(payload).eq('id', editingId).eq('seller_id', state.user.id)
+      : supabase.from('listings').insert(payload)
+    const { error } = await request
     if (error) await showMessage(error.message, { title: 'No se pudo publicar', tone: 'error' })
-    else { this.closeVerificationModal(); await showMessage('Tu publicación ya está disponible en el marketplace.', { title: 'Publicación creada', tone: 'success' }); await loadAll(); render() }
+    else { this.closeVerificationModal(); await showMessage(editingId ? 'Tu publicación fue actualizada.' : 'Tu publicación ya está disponible en el marketplace.', { title: editingId ? 'Publicación actualizada' : 'Publicación creada', tone: 'success' }); await loadAll(); render() }
+  },
+  async deleteListing(listingId){
+    const ok = await showMessage('La publicación dejará de estar disponible para otros usuarios. Si ya tiene operaciones abiertas, esas operaciones no se modifican.', { title: 'Eliminar publicación', tone: 'info' })
+    if (!ok) return
+    const { error } = await supabase.from('listings').update({ status:'cancelled' }).eq('id', listingId).eq('seller_id', state.user.id)
+    if (error) return showMessage(error.message, { title: 'No se pudo eliminar', tone: 'error' })
+    await showMessage('La publicación fue eliminada de la disponibilidad.', { title: 'Publicación eliminada', tone: 'success' })
+    await loadAll()
+    render()
   },
   async startBuy(listingId){
     if (!state.user) { state.view='auth'; render(); return }
@@ -1220,8 +1254,11 @@ window.appActions = {
       { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente', action:{ view:'order', id:data.id } },
       { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada', action:{ view:'order', id:data.id } }
     ])
-    await showMessage('Vas a ver la operación en Mis operaciones para continuar el proceso.', { title: 'Compra iniciada', tone: 'success' })
-    await loadAll(); state.view='my'; render()
+    await showMessage('Seguí los pasos del proceso seguro dentro del detalle de la operación. Usá el chat para coordinar y no hagas pagos ni entregas por fuera de la plataforma.', { title: 'Compra iniciada', tone: 'success' })
+    await loadAll()
+    state.view='my'
+    render()
+    await openOrder(data.id)
   },
   async startExchange(listingId){
     if (!state.user) { state.view='auth'; render(); return }
@@ -1335,6 +1372,18 @@ window.appActions = {
     await openOrder(orderId)
   },
   async updateOrder(id,status){
+    const order = state.orders.find(o => o.id === id) || (await supabase.from('orders').select('*').eq('id', id).maybeSingle()).data
+    if (status === 'cancelled' && order && !['cancelled','completed'].includes(order.status)) {
+      const listing = state.listings.find(l => l.id === order.listing_id) || (await supabase.from('listings').select('*').eq('id', order.listing_id).maybeSingle()).data
+      if (listing && listing.type !== 'exchange') {
+        const restoredQty = Number(listing.quantity || 0) + Number(order.quantity || 0)
+        await supabase.from('listings').update({ quantity: restoredQty, status:'active' }).eq('id', listing.id)
+      }
+      await notifyUsers([
+        { user_id:order.buyer_id, message:'La operación fue cancelada. Las entradas volvieron a estar disponibles.', subject:'Operación cancelada', action:{ view:'order', id } },
+        { user_id:order.seller_id, message:'La operación fue cancelada. Las entradas volvieron a estar disponibles.', subject:'Operación cancelada', action:{ view:'order', id } }
+      ])
+    }
     await supabase.from('orders').update({ status }).eq('id', id)
     await loadAll()
     await openOrder(id)
