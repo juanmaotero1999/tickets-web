@@ -70,6 +70,9 @@ body.dark .verification-disclaimer{background:rgba(245,165,36,.12);border-color:
 .input:focus,.select:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 0 4px rgba(89,217,255,.16)}
 .input:disabled,.select:disabled,textarea:disabled{background:#eef0f4;color:#8a93a3;cursor:not-allowed;opacity:.78}
 body.dark .input:disabled,body.dark .select:disabled,body.dark textarea:disabled{background:#1d2430;color:#717b8c}
+.field-hint{display:block;margin-top:6px;color:var(--muted);font-weight:750;font-size:12px}
+.phone-row{display:grid;grid-template-columns:minmax(190px,.42fr) minmax(0,1fr);gap:10px}
+.phone-code{min-width:0}
 .phase-section{margin:30px 0}
 .phase-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .phase-title h2{font-size:30px;margin:0;letter-spacing:-.05em;display:flex;align-items:center;gap:10px}
@@ -316,6 +319,10 @@ body.dark .fixed-review{background:rgba(22,163,74,.12);border-color:rgba(34,197,
 .admin-menu-list button{display:flex;align-items:center;justify-content:space-between;gap:10px;border-radius:14px;background:transparent;color:var(--text);padding:12px;font-weight:900;text-align:left}
 .admin-menu-list button.active{background:var(--accent);color:white}
 .admin-menu-list b{min-width:24px;height:24px;border-radius:999px;background:rgba(127,127,127,.16);display:grid;place-items:center;font-size:12px}
+.settings-submenu{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 18px}
+.settings-submenu button{border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--text);font-weight:900;padding:10px 14px}
+.settings-submenu button.active{background:var(--accent);color:white;border-color:var(--accent)}
+.match-config-card .form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 .admin-content{min-width:0}
 .admin-alert,.module-dot{display:inline-grid;place-items:center;background:#fee4e2;color:#b42318;border:1px solid #fecdca;font-weight:950}
 .admin-alert{border-radius:999px;padding:9px 12px;white-space:nowrap}
@@ -374,6 +381,7 @@ body.dark .timeline-step.done{background:rgba(22,163,74,.12);border-color:rgba(3
   .admin-sidebar:not(.open) .admin-menu-list{display:none}
   .admin-title,.operation-head{flex-direction:column;align-items:stretch}
   .flow-grid{grid-template-columns:1fr}
+  .phone-row,.match-config-card .form-grid{grid-template-columns:1fr}
   .notifications-popover{right:18px;top:96px}
 }
 @media(max-width:720px){

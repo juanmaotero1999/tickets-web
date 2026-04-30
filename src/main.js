@@ -24,6 +24,7 @@ let state = {
   theme: localStorage.getItem('theme') || 'light',
   authMode: 'login',
   adminSection: 'users',
+  adminSettingsSection: 'matches',
   adminMenuOpen: true,
   operationFilters: { active:true, waiting:true, completed:true, cancelled:true, issue:true },
   publicationFilters: { available:true, finished:true },
@@ -182,11 +183,70 @@ const money = (n, c = 'ARS') => {
   return new Intl.NumberFormat('es-AR', { style:'currency', currency:c === 'USD' ? 'USD' : 'ARS', maximumFractionDigits:0 }).format(Number(n))
 }
 
+const userTimeZone = () => state.profile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Argentina/Buenos_Aires'
 const fmtDate = (d) => {
   if (!d) return 'Fecha a confirmar'
   const date = new Date(d)
   if (isNaN(date)) return d
+  return date.toLocaleString('es-AR', { timeZone:userTimeZone(), day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
+}
+const fmtMatchDate = (d) => {
+  if (!d) return 'Fecha a confirmar'
+  const date = new Date(d)
+  if (isNaN(date)) return d
   return date.toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
+}
+
+const countryRows = [
+  ['AR','Argentina','+54'],['BR','Brasil','+55'],['CO','Colombia','+57'],['MX','México','+52'],['PY','Paraguay','+595'],['UY','Uruguay','+598'],
+  ['AF','Afganistán','+93'],['AL','Albania','+355'],['DE','Alemania','+49'],['AD','Andorra','+376'],['AO','Angola','+244'],['AI','Anguila','+1'],['AQ','Antártida','+672'],['AG','Antigua y Barbuda','+1'],['SA','Arabia Saudita','+966'],['DZ','Argelia','+213'],['AM','Armenia','+374'],['AW','Aruba','+297'],['AU','Australia','+61'],['AT','Austria','+43'],['AZ','Azerbaiyán','+994'],
+  ['BS','Bahamas','+1'],['BH','Baréin','+973'],['BD','Bangladés','+880'],['BB','Barbados','+1'],['BE','Bélgica','+32'],['BZ','Belice','+501'],['BJ','Benín','+229'],['BM','Bermudas','+1'],['BY','Bielorrusia','+375'],['BO','Bolivia','+591'],['BA','Bosnia y Herzegovina','+387'],['BW','Botsuana','+267'],['BG','Bulgaria','+359'],['BF','Burkina Faso','+226'],['BI','Burundi','+257'],['BT','Bután','+975'],
+  ['CV','Cabo Verde','+238'],['KH','Camboya','+855'],['CM','Camerún','+237'],['CA','Canadá','+1'],['BQ','Caribe Neerlandés','+599'],['QA','Catar','+974'],['TD','Chad','+235'],['CL','Chile','+56'],['CN','China','+86'],['CY','Chipre','+357'],['VA','Ciudad del Vaticano','+39'],['KM','Comoras','+269'],['CG','Congo','+242'],['CD','Congo, República Democrática','+243'],['KR','Corea del Sur','+82'],['KP','Corea del Norte','+850'],['CI','Costa de Marfil','+225'],['CR','Costa Rica','+506'],['HR','Croacia','+385'],['CU','Cuba','+53'],['CW','Curazao','+599'],
+  ['DK','Dinamarca','+45'],['DM','Dominica','+1'],['EC','Ecuador','+593'],['EG','Egipto','+20'],['SV','El Salvador','+503'],['AE','Emiratos Árabes Unidos','+971'],['ER','Eritrea','+291'],['SK','Eslovaquia','+421'],['SI','Eslovenia','+386'],['ES','España','+34'],['US','Estados Unidos','+1'],['EE','Estonia','+372'],['SZ','Esuatini','+268'],['ET','Etiopía','+251'],
+  ['PH','Filipinas','+63'],['FI','Finlandia','+358'],['FJ','Fiyi','+679'],['FR','Francia','+33'],['GA','Gabón','+241'],['GM','Gambia','+220'],['GE','Georgia','+995'],['GH','Ghana','+233'],['GI','Gibraltar','+350'],['GD','Granada','+1'],['GR','Grecia','+30'],['GL','Groenlandia','+299'],['GP','Guadalupe','+590'],['GU','Guam','+1'],['GT','Guatemala','+502'],['GF','Guayana Francesa','+594'],['GG','Guernsey','+44'],['GN','Guinea','+224'],['GQ','Guinea Ecuatorial','+240'],['GW','Guinea-Bisáu','+245'],['GY','Guyana','+592'],
+  ['HT','Haití','+509'],['HN','Honduras','+504'],['HK','Hong Kong','+852'],['HU','Hungría','+36'],['IN','India','+91'],['ID','Indonesia','+62'],['IQ','Irak','+964'],['IR','Irán','+98'],['IE','Irlanda','+353'],['IM','Isla de Man','+44'],['IS','Islandia','+354'],['KY','Islas Caimán','+1'],['CK','Islas Cook','+682'],['FO','Islas Feroe','+298'],['FK','Islas Malvinas','+500'],['MP','Islas Marianas del Norte','+1'],['MH','Islas Marshall','+692'],['SB','Islas Salomón','+677'],['TC','Islas Turcas y Caicos','+1'],['VG','Islas Vírgenes Británicas','+1'],['VI','Islas Vírgenes de EE.UU.','+1'],['IL','Israel','+972'],['IT','Italia','+39'],
+  ['JM','Jamaica','+1'],['JP','Japón','+81'],['JE','Jersey','+44'],['JO','Jordania','+962'],['KZ','Kazajistán','+7'],['KE','Kenia','+254'],['KG','Kirguistán','+996'],['KI','Kiribati','+686'],['KW','Kuwait','+965'],['LA','Laos','+856'],['LS','Lesoto','+266'],['LV','Letonia','+371'],['LB','Líbano','+961'],['LR','Liberia','+231'],['LY','Libia','+218'],['LI','Liechtenstein','+423'],['LT','Lituania','+370'],['LU','Luxemburgo','+352'],
+  ['MO','Macao','+853'],['MK','Macedonia del Norte','+389'],['MG','Madagascar','+261'],['MY','Malasia','+60'],['MW','Malaui','+265'],['MV','Maldivas','+960'],['ML','Malí','+223'],['MT','Malta','+356'],['MA','Marruecos','+212'],['MQ','Martinica','+596'],['MU','Mauricio','+230'],['MR','Mauritania','+222'],['YT','Mayotte','+262'],['FM','Micronesia','+691'],['MD','Moldavia','+373'],['MC','Mónaco','+377'],['MN','Mongolia','+976'],['ME','Montenegro','+382'],['MS','Montserrat','+1'],['MZ','Mozambique','+258'],['MM','Myanmar','+95'],
+  ['NA','Namibia','+264'],['NR','Nauru','+674'],['NP','Nepal','+977'],['NI','Nicaragua','+505'],['NE','Níger','+227'],['NG','Nigeria','+234'],['NU','Niue','+683'],['NO','Noruega','+47'],['NC','Nueva Caledonia','+687'],['NZ','Nueva Zelanda','+64'],['OM','Omán','+968'],['NL','Países Bajos','+31'],['PK','Pakistán','+92'],['PW','Palaos','+680'],['PS','Palestina','+970'],['PA','Panamá','+507'],['PG','Papúa Nueva Guinea','+675'],['PE','Perú','+51'],['PF','Polinesia Francesa','+689'],['PL','Polonia','+48'],['PT','Portugal','+351'],['PR','Puerto Rico','+1'],
+  ['GB','Reino Unido','+44'],['CF','República Centroafricana','+236'],['CZ','República Checa','+420'],['DO','República Dominicana','+1'],['RE','Reunión','+262'],['RW','Ruanda','+250'],['RO','Rumania','+40'],['RU','Rusia','+7'],['EH','Sahara Occidental','+212'],['WS','Samoa','+685'],['AS','Samoa Americana','+1'],['BL','San Bartolomé','+590'],['KN','San Cristóbal y Nieves','+1'],['SM','San Marino','+378'],['MF','San Martín','+590'],['PM','San Pedro y Miquelón','+508'],['VC','San Vicente y las Granadinas','+1'],['SH','Santa Elena','+290'],['LC','Santa Lucía','+1'],['ST','Santo Tomé y Príncipe','+239'],['SN','Senegal','+221'],['RS','Serbia','+381'],['SC','Seychelles','+248'],['SL','Sierra Leona','+232'],['SG','Singapur','+65'],['SX','Sint Maarten','+1'],['SY','Siria','+963'],['SO','Somalia','+252'],['LK','Sri Lanka','+94'],['ZA','Sudáfrica','+27'],['SD','Sudán','+249'],['SS','Sudán del Sur','+211'],['SE','Suecia','+46'],['CH','Suiza','+41'],['SR','Surinam','+597'],
+  ['TH','Tailandia','+66'],['TW','Taiwán','+886'],['TZ','Tanzania','+255'],['TJ','Tayikistán','+992'],['TL','Timor Oriental','+670'],['TG','Togo','+228'],['TK','Tokelau','+690'],['TO','Tonga','+676'],['TT','Trinidad y Tobago','+1'],['TN','Túnez','+216'],['TM','Turkmenistán','+993'],['TR','Turquía','+90'],['TV','Tuvalu','+688'],['UA','Ucrania','+380'],['UG','Uganda','+256'],['UZ','Uzbekistán','+998'],['VU','Vanuatu','+678'],['VE','Venezuela','+58'],['VN','Vietnam','+84'],['WF','Wallis y Futuna','+681'],['YE','Yemen','+967'],['DJ','Yibuti','+253'],['ZM','Zambia','+260'],['ZW','Zimbabue','+263']
+]
+const priorityCountryCodes = new Set(['AR','BR','CO','MX','PY','UY'])
+const countryOptionRows = () => [
+  ...countryRows.filter(([code]) => priorityCountryCodes.has(code)).sort((a,b)=>a[1].localeCompare(b[1], 'es')),
+  ['','──────────','', true],
+  ...countryRows.filter(([code]) => !priorityCountryCodes.has(code)).sort((a,b)=>a[1].localeCompare(b[1], 'es'))
+]
+const countryOptionsHtml = (selected = '') => countryOptionRows().map(([code, name,, disabled]) => disabled
+  ? `<option disabled>${name}</option>`
+  : `<option value="${code}" ${String(selected || '') === code || String(selected || '').toLowerCase() === name.toLowerCase() ? 'selected' : ''}>${name}</option>`
+).join('')
+const phoneOptionsHtml = (selected = '+54') => countryOptionRows().map(([code, name, dial, disabled]) => disabled
+  ? `<option disabled>${name}</option>`
+  : `<option value="${dial}" ${String(selected || '') === dial ? 'selected' : ''}>${name} ${dial}</option>`
+).join('')
+const phoneParts = (value = '') => {
+  const text = String(value || '').trim()
+  const match = text.match(/^(\+\d{1,4})\s*(.*)$/)
+  return { code: match?.[1] || '+54', number: match?.[2] || text }
+}
+const languageOptionsHtml = (selected = 'es') => [
+  ['es','Español'],['en','Inglés'],['pt','Portugués']
+].map(([value,label]) => `<option value="${value}" ${String(selected || '').toLowerCase().startsWith(value) ? 'selected' : ''}>${label}</option>`).join('')
+const formatOffset = (timeZone) => {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName:'shortOffset' }).formatToParts(new Date())
+    return (parts.find(p => p.type === 'timeZoneName')?.value || 'GMT').replace(/^GMT$/, 'GMT+00:00')
+  } catch (_) { return 'GMT' }
+}
+const timeZoneOptionsHtml = (selected = userTimeZone()) => {
+  const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : ['America/Argentina/Buenos_Aires','America/Montevideo','America/Sao_Paulo','America/Asuncion','America/Mexico_City','America/Bogota','Europe/Madrid','Europe/London','America/New_York']
+  const priority = ['America/Argentina/Buenos_Aires','America/Montevideo','America/Sao_Paulo','America/Asuncion','America/Mexico_City','America/Bogota']
+  const rows = [...priority.filter(z => zones.includes(z)), '', ...zones.filter(z => !priority.includes(z))]
+  return rows.map(zone => zone
+    ? `<option value="${zone}" ${selected === zone ? 'selected' : ''}>${formatOffset(zone)} - ${zone.replaceAll('_', ' ')}</option>`
+    : '<option disabled>──────────</option>'
+  ).join('')
 }
 
 const flagFiles = {
@@ -303,7 +363,7 @@ const exchangeWantedSummary = (l = {}) => {
 const matchPickerOption = (m, target) => `
   <button class="match-option" type="button" data-search="${escapeHtml(`${m.match_number} ${m.home_team} ${m.away_team} ${m.home_code} ${m.away_code} ${m.city} ${m.stadium}`.toLowerCase())}" onclick="window.appActions.pickMatch('${target}','${m.id}')">
     <span class="match-option-flags">${flagImg(m.home_code, 'flag-mini')}${flagImg(m.away_code, 'flag-mini')}</span>
-    <span><strong>${matchLabel(m)}</strong><small>${m.group_name || phaseLabels[m.phase] || ''} · ${fmtDate(m.match_date)}</small></span>
+    <span><strong>${matchLabel(m)}</strong><small>${m.group_name || phaseLabels[m.phase] || ''} · ${fmtMatchDate(m.match_date)}</small></span>
   </button>`
 
 function matchPicker(target, label, selectedId = '', multiple = false) {
@@ -515,10 +575,14 @@ async function ensureProfile() {
       email: state.user.email,
       first_name: meta.first_name || fullName[0] || '',
       last_name: meta.last_name || fullName.slice(1).join(' ') || '',
+      country: meta.country || '',
       document_type: meta.document_type || '',
       document_number: meta.document_number || '',
+      document_country: meta.document_country || '',
       account_status: 'active',
       verification_status: 'not_verified',
+      timezone: 'America/Argentina/Buenos_Aires',
+      preferred_language: 'es',
       preferred_currency: 'ARS',
       role: ADMIN_EMAILS.includes(state.user.email) ? 'admin' : 'user'
     })
@@ -753,7 +817,7 @@ function matchCard(m) {
       </h3>
       <div class="meta">${m.group_name || phaseLabels[m.phase] || ''}</div>
       <div class="meta">📍 ${m.city || ''} - ${m.stadium || ''}</div>
-      <div class="meta">🗓️ ${fmtDate(m.match_date)}</div>
+      <div class="meta">🗓️ ${fmtMatchDate(m.match_date)}</div>
       <div class="match-actions">
         <button class="price-btn" onclick="window.appActions.openMatch('${m.id}')" ${offers ? '' : 'disabled'}>${offers ? (price ? `Desde ${price}` : 'Ver ofertas') : 'Sin ofertas'}</button>
         <button class="secondary-btn" onclick="window.appActions.requireLogin('sell','${m.id}')">Vender</button>
@@ -777,8 +841,10 @@ function authView() {
           <div class="field"><label>Apellido</label><input id="regLast" class="input"></div>
           <div class="field"><label>Email</label><input id="regEmail" class="input"></div>
           <div class="field"><label>Contraseña</label><input id="regPass" type="password" class="input"></div>
+          <div class="field"><label>País</label><select id="regCountry" class="select">${countryOptionsHtml('AR')}</select></div>
           <div class="field"><label>Tipo documento</label><select id="regDocType" class="select"><option>DNI</option><option>Pasaporte</option><option>CI</option></select></div>
           <div class="field"><label>Número documento</label><input id="regDoc" class="input"></div>
+          <div class="field"><label>País emisión documento</label><select id="regDocCountry" class="select">${countryOptionsHtml('AR')}</select></div>
         </div>
         <div class="auth-actions"><button class="pill-btn primary" onclick="window.appActions.register()">Crear cuenta</button></div>
         <button class="link-btn" onclick="window.appActions.setAuthMode('login')">Ya tengo cuenta</button>
@@ -842,7 +908,7 @@ function matchDetail() {
         </div>
         <div class="match-event-meta">
           <span>📍 ${m.city} - ${m.stadium}</span>
-          <span>🗓️ ${fmtDate(m.match_date)}</span>
+          <span>🗓️ ${fmtMatchDate(m.match_date)}</span>
         </div>
       </div>
     </div>
@@ -982,10 +1048,19 @@ function profileView() {
   const personalFields = [['first_name','Nombre'],['last_name','Apellido'],['birth_date','Fecha de nacimiento'],['nationality','Nacionalidad'],['sex','Sexo']]
   const documentFields = [['document_type','Tipo de documento'],['document_number','Número de documento'],['document_country','País emisión documento']]
   const contactFields = [['phone','Teléfono'],['country','País'],['state','Provincia/Estado'],['city','Ciudad'],['address','Dirección']]
-  const preferenceFields = [['timezone','Timezone'],['preferred_language','Idioma preferido'],['preferred_currency','Divisa preferida']]
+  const preferenceFields = [['timezone','Zona horaria'],['preferred_language','Idioma preferido'],['preferred_currency','Divisa preferida']]
   const locked = isVerified()
   const lockedAttrs = locked ? 'disabled title="Este dato queda bloqueado después de verificar tu identidad."' : ''
-  const fieldHtml = (fields, lockSensitive = false) => fields.map(([k,label])=>`<div class="field"><label>${label}</label><input class="input" id="profile_${k}" value="${escapeHtml(p[k] || '')}" ${lockSensitive ? lockedAttrs : ''}></div>`).join('')
+  const phone = phoneParts(p.phone)
+  const fieldHtml = (fields, lockSensitive = false) => fields.map(([k,label])=>{
+    const lockedAttr = lockSensitive ? lockedAttrs : ''
+    if (k === 'birth_date') return `<div class="field"><label>${label}</label><input class="input" id="profile_${k}" type="date" lang="es-AR" value="${escapeHtml(p[k] ? String(p[k]).slice(0,10) : '')}" placeholder="dd/mm/aaaa" ${lockedAttr}><small class="field-hint">Seleccioná desde el calendario.</small></div>`
+    if (k === 'document_country' || k === 'country') return `<div class="field"><label>${label}</label><select class="select" id="profile_${k}" ${lockedAttr}>${countryOptionsHtml(p[k] || 'AR')}</select></div>`
+    if (k === 'phone') return `<div class="field full-field"><label>${label}</label><div class="phone-row"><select class="select phone-code" id="profile_phone_country_code">${phoneOptionsHtml(phone.code)}</select><input class="input" id="profile_phone" inputmode="tel" value="${escapeHtml(phone.number)}" placeholder="Número sin código de país"></div></div>`
+    if (k === 'timezone') return `<div class="field"><label>${label}</label><select class="select" id="profile_${k}">${timeZoneOptionsHtml(p[k] || userTimeZone())}</select></div>`
+    if (k === 'preferred_language') return `<div class="field"><label>${label}</label><select class="select" id="profile_${k}">${languageOptionsHtml(p[k] || 'es')}</select></div>`
+    return `<div class="field"><label>${label}</label><input class="input" id="profile_${k}" value="${escapeHtml(p[k] || '')}" ${lockedAttr}></div>`
+  }).join('')
   const fullName = `${p.first_name || ''} ${p.last_name || ''}`.trim()
   const uploadLockCopy = 'Cuenta verificada: este paso queda bloqueado para proteger tu identidad.'
   return `<div class="container">
@@ -1147,6 +1222,20 @@ function adminView() {
       <div class="footer-actions"><button class="secondary-btn" onclick="window.appActions.saveSiteSetting('${s.id}')">Guardar mensaje</button></div>
     </div>`).join('')
   const section = state.adminSection || 'users'
+  const settingsSection = state.adminSettingsSection || 'matches'
+  const matchSettingsRows = state.matches.map(m=>`
+    <div class="email-template-card match-config-card">
+      <div><strong>#${m.match_number || m.id} ${escapeHtml(m.home_team || m.home_code || '')} vs ${escapeHtml(m.away_team || m.away_code || '')}</strong><p class="meta">${escapeHtml(m.city || '')} · ${escapeHtml(m.stadium || '')}</p></div>
+      <div class="form-grid">
+        <div class="field"><label>Local</label><input id="match_home_team_${m.id}" class="input" value="${escapeHtml(m.home_team || '')}"></div>
+        <div class="field"><label>Visitante</label><input id="match_away_team_${m.id}" class="input" value="${escapeHtml(m.away_team || '')}"></div>
+        <div class="field"><label>Ciudad</label><input id="match_city_${m.id}" class="input" value="${escapeHtml(m.city || '')}"></div>
+        <div class="field"><label>Estadio</label><input id="match_stadium_${m.id}" class="input" value="${escapeHtml(m.stadium || '')}"></div>
+        <div class="field"><label>Fecha y hora local del partido</label><input id="match_date_${m.id}" class="input" type="datetime-local" value="${m.match_date ? escapeHtml(String(m.match_date).slice(0,16)) : ''}"></div>
+        <div class="field"><label>Fase</label><input id="match_phase_${m.id}" class="input" value="${escapeHtml(m.phase || '')}"></div>
+      </div>
+      <div class="footer-actions"><button class="secondary-btn" onclick="window.appActions.saveMatchConfig('${m.id}')">Guardar partido</button></div>
+    </div>`).join('')
   const menu = [
     ['users','Usuarios',state.users.length],
     ['verifications','Verificaciones',verificationQueue.length],
@@ -1186,10 +1275,14 @@ function adminView() {
     </section>`,
     settings: `<section class="admin-module panel">
       <div class="section-head"><div><h2>Configuración</h2><p class="meta">Plantillas de email, disclaimers y mensajes editables.</p></div></div>
-      <h3>Plantillas de emails</h3>
-      <div class="operations-list">${templateRows || '<div class="empty">No hay plantillas cargadas. Ejecutá el schema para crear las plantillas base.</div>'}</div>
-      <h3 style="margin-top:22px">Disclaimers y mensajes</h3>
-      <div class="operations-list">${settingsRows || '<div class="empty">No hay mensajes configurables. Ejecutá el schema para crear los mensajes base.</div>'}</div>
+      <div class="settings-submenu">
+        <button class="${settingsSection === 'matches' ? 'active' : ''}" onclick="window.appActions.setAdminSettingsSection('matches')">Partidos</button>
+        <button class="${settingsSection === 'mails' ? 'active' : ''}" onclick="window.appActions.setAdminSettingsSection('mails')">Mails</button>
+        <button class="${settingsSection === 'messages' ? 'active' : ''}" onclick="window.appActions.setAdminSettingsSection('messages')">Mensajes y alertas</button>
+      </div>
+      ${settingsSection === 'matches' ? `<h3>Configurar partidos</h3><p class="meta">Usalo solo si necesitás corregir sede, fecha, fase o nombres. Los horarios de partidos se mantienen como hora local del evento.</p><div class="operations-list">${matchSettingsRows || '<div class="empty">No hay partidos cargados.</div>'}</div>` : ''}
+      ${settingsSection === 'mails' ? `<h3>Plantillas de emails</h3><div class="operations-list">${templateRows || '<div class="empty">No hay plantillas cargadas. Ejecutá el schema para crear las plantillas base.</div>'}</div>` : ''}
+      ${settingsSection === 'messages' ? `<h3>Disclaimers y mensajes</h3><div class="operations-list">${settingsRows || '<div class="empty">No hay mensajes configurables. Ejecutá el schema para crear los mensajes base.</div>'}</div>` : ''}
     </section>
     `
   }[section]
@@ -1501,6 +1594,10 @@ window.appActions = {
     state.adminMenuOpen = !state.adminMenuOpen
     render()
   },
+  setAdminSettingsSection(section){
+    state.adminSettingsSection = section
+    render()
+  },
   toggleNotifications(){
     state.notificationsOpen = !state.notificationsOpen
     render()
@@ -1659,12 +1756,14 @@ window.appActions = {
     const password = document.getElementById('regPass').value
     const first_name = document.getElementById('regFirst').value.trim()
     const last_name = document.getElementById('regLast').value.trim()
+    const country = document.getElementById('regCountry').value
     const document_type = document.getElementById('regDocType').value
     const document_number = document.getElementById('regDoc').value.trim()
-    const { data, error } = await supabase.auth.signUp({ email, password, options:{ data:{ first_name,last_name,document_type,document_number } } })
+    const document_country = document.getElementById('regDocCountry').value
+    const { data, error } = await supabase.auth.signUp({ email, password, options:{ data:{ first_name,last_name,country,document_type,document_number,document_country } } })
     if (error) { await showMessage(error.message, { title: 'No se pudo crear la cuenta', tone: 'error' }); return }
     if (data.user) {
-      await supabase.from('users').upsert({ id:data.user.id,email,first_name,last_name,document_type,document_number,account_status:'active',verification_status:'not_verified',preferred_currency:'ARS' })
+      await supabase.from('users').upsert({ id:data.user.id,email,first_name,last_name,country,document_type,document_number,document_country,account_status:'active',verification_status:'not_verified',preferred_currency:'ARS',preferred_language:'es',timezone:'America/Argentina/Buenos_Aires' })
       await notifyUser(data.user.id, 'Tu cuenta fue creada. Verificá tu identidad para poder comprar, vender e intercambiar.', `Bienvenido a ${APP_NAME}`, { view:'profile', template:'registro', vars:{ nombre:first_name } })
     }
     await showMessage('Usuario creado. Iniciá sesión.', { title: 'Cuenta lista', tone: 'success' })
@@ -1900,6 +1999,9 @@ window.appActions = {
     const editableFields = isVerified() ? fields.filter(k => !lockedFields.includes(k)) : fields
     const payload = { id:state.user.id, email:state.user.email }
     editableFields.forEach(k => payload[k] = document.getElementById(`profile_${k}`).value)
+    const phoneCode = document.getElementById('profile_phone_country_code')?.value || ''
+    const phoneNumber = document.getElementById('profile_phone')?.value.trim() || ''
+    if (editableFields.includes('phone')) payload.phone = `${phoneCode} ${phoneNumber}`.trim()
     payload.two_factor_enabled = document.getElementById('profile_two_factor_enabled').value === 'true'
     payload.email_notifications = document.getElementById('profile_email_notifications').value === 'true'
     const { error } = await supabase.from('users').upsert(payload)
@@ -2421,9 +2523,9 @@ window.appActions = {
               <div class="field"><label>Rol</label><select id="admin_role" class="select"><option value="user" ${selected('role','user')}>Usuario</option><option value="admin" ${selected('role','admin')}>Admin</option></select></div>
               <div class="field"><label>Tipo documento</label><input id="admin_document_type" class="input" value="${value('document_type')}"></div>
               <div class="field"><label>Número documento</label><input id="admin_document_number" class="input" value="${value('document_number')}"></div>
-              <div class="field"><label>País documento</label><input id="admin_document_country" class="input" value="${value('document_country')}"></div>
+              <div class="field"><label>País documento</label><select id="admin_document_country" class="select">${countryOptionsHtml(u.document_country || 'AR')}</select></div>
               <div class="field"><label>Teléfono</label><input id="admin_phone" class="input" value="${value('phone')}"></div>
-              <div class="field"><label>País</label><input id="admin_country" class="input" value="${value('country')}"></div>
+              <div class="field"><label>País</label><select id="admin_country" class="select">${countryOptionsHtml(u.country || 'AR')}</select></div>
               <div class="field"><label>Provincia/Estado</label><input id="admin_state" class="input" value="${value('state')}"></div>
               <div class="field"><label>Ciudad</label><input id="admin_city" class="input" value="${value('city')}"></div>
               <div class="field"><label>Verificación</label><select id="admin_verification_status" class="select">
@@ -2500,6 +2602,22 @@ window.appActions = {
     const { error } = await supabase.from('site_settings').update({ value }).eq('id', id)
     if (error) return showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
     await showMessage('El mensaje fue actualizado.', { title: 'Configuración guardada', tone: 'success' })
+    await loadAll()
+    render()
+  },
+  async saveMatchConfig(id){
+    if (!isAdmin()) return
+    const payload = {
+      home_team: document.getElementById(`match_home_team_${id}`)?.value || '',
+      away_team: document.getElementById(`match_away_team_${id}`)?.value || '',
+      city: document.getElementById(`match_city_${id}`)?.value || '',
+      stadium: document.getElementById(`match_stadium_${id}`)?.value || '',
+      match_date: document.getElementById(`match_date_${id}`)?.value || null,
+      phase: document.getElementById(`match_phase_${id}`)?.value || ''
+    }
+    const { error } = await supabase.from('matches').update(payload).eq('id', id)
+    if (error) return showMessage(error.message, { title: 'No se pudo guardar el partido', tone: 'error' })
+    await showMessage('El partido fue actualizado.', { title: 'Partido guardado', tone: 'success' })
     await loadAll()
     render()
   },
