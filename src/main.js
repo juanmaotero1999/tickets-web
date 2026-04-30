@@ -1,5 +1,5 @@
 
-import { supabase } from '../lib/supabase.js'
+import { supabase, supabaseConfigMissing } from '../lib/supabase.js'
 import './styles.css'
 
 const app = document.getElementById('app')
@@ -18,8 +18,11 @@ let state = {
   notifications: [],
   reviews: [],
   emailTemplates: [],
+  siteSettings: [],
   theme: localStorage.getItem('theme') || 'light',
   authMode: 'login',
+  adminSection: 'users',
+  adminMenuOpen: true,
   notificationsOpen: false,
   prefMatchId: '',
   selectedMatch: null,
@@ -31,6 +34,21 @@ let state = {
 document.body.classList.toggle('dark', state.theme === 'dark')
 
 const ADMIN_EMAILS = ['admin@demo.com', 'juanmaotero1999@gmail.com']
+
+function missingConfigView() {
+  app.innerHTML = `
+    <div class="app-shell">
+      <div class="container">
+        <div class="panel config-missing">
+          <h1>Falta conectar Supabase</h1>
+          <p class="meta">La app cargó bien, pero no puede iniciar sesión, registrar usuarios ni comprar hasta que existan estas variables de entorno de Vite:</p>
+          <code>VITE_SUPABASE_URL</code>
+          <code>VITE_SUPABASE_KEY</code>
+          <p class="meta">En local van en un archivo <strong>.env.local</strong>. En Vercel/hosting van en Environment Variables y después hay que redeployar.</p>
+        </div>
+      </div>
+    </div>`
+}
 
 const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
   '&': '&amp;',
@@ -128,10 +146,11 @@ const flagImg = (code, className = 'flag-thumb') => {
 const isAdmin = () => ADMIN_EMAILS.includes(state.user?.email) || state.profile?.role === 'admin'
 const isVerified = () => state.profile?.verification_status === 'verified'
 const canOperate = () => Boolean(state.user && isVerified())
+const siteSetting = (key, fallback) => state.siteSettings.find(s => s.key === key)?.value || fallback
 const verificationDisclaimer = () => state.user && !isVerified() ? `
   <div class="verification-disclaimer">
     <strong>Verificá tu identidad para operar</strong>
-    <span>Hasta que completes la verificación enviando la documentación solicitada y sea aprobada, no vas a poder comprar, vender ni intercambiar entradas.</span>
+    <span>${escapeHtml(siteSetting('verification_disclaimer', 'Hasta que completes la verificación enviando la documentación solicitada y sea aprobada, no vas a poder comprar, vender ni intercambiar entradas.'))}</span>
     <button class="secondary-btn" onclick="window.appActions.setView('profile')">Ir a verificación</button>
   </div>` : ''
 
@@ -315,6 +334,22 @@ async function notifyUsers(notices) {
   await Promise.all((notices || []).map(notice => notifyUser(notice.user_id, notice.message, notice.subject, notice.action)))
 }
 
+async function insertOrderWithFallback(payload) {
+  let result = await supabase.from('orders').insert(payload).select().single()
+  if (result.error && /schema cache|column|seller_delivery_status|buyer_delivery_status|admin_/i.test(result.error.message || '')) {
+    const legacyPayload = {
+      listing_id: payload.listing_id,
+      buyer_id: payload.buyer_id,
+      seller_id: payload.seller_id,
+      quantity: payload.quantity,
+      total: payload.total,
+      status: payload.status
+    }
+    result = await supabase.from('orders').insert(legacyPayload).select().single()
+  }
+  return result
+}
+
 function askQuantity(max) {
   const options = Array.from({ length: Number(max) || 0 }, (_, i) => i + 1)
   return new Promise(resolve => {
@@ -343,6 +378,10 @@ function askQuantity(max) {
 }
 
 async function init() {
+  if (supabaseConfigMissing) {
+    missingConfigView()
+    return
+  }
   const { data: { session } } = await supabase.auth.getSession()
   state.session = session
   state.user = session?.user || null
@@ -391,11 +430,14 @@ async function loadAll() {
   if (reviews.error) reviews = { data: [] }
   let templates = isAdmin() ? await supabase.from('email_templates').select('*').order('event_key') : { data: [] }
   if (templates.error) templates = { data: [] }
+  let settings = await supabase.from('site_settings').select('*').order('key')
+  if (settings.error) settings = { data: [] }
   state.matches = m.data || []
   state.listings = l.data || []
   state.users = users.data || []
   state.reviews = reviews.data || []
   state.emailTemplates = templates.data || []
+  state.siteSettings = settings.data || []
   if (state.user) {
     const ordersQuery = isAdmin()
       ? supabase.from('orders').select('*').order('created_at', { ascending:false })
@@ -889,7 +931,14 @@ function adminView() {
   if (!isAdmin()) return `<div class="container"><div class="empty">No tenés permisos de admin.</div></div>`
   const pending = state.orders.filter(o=>!['completed','cancelled'].includes(o.status)).length
   const verificationQueue = state.users.filter(u => u.verification_status === 'pending_review' && u.identity_document_path && u.liveness_side_path && u.liveness_front_path)
-  const operations = state.orders
+  const sales = state.orders.filter(o => {
+    const l = state.listings.find(x=>x.id===o.listing_id)
+    return l?.type !== 'exchange' && !String(o.status || '').startsWith('exchange')
+  })
+  const exchanges = state.orders.filter(o => {
+    const l = state.listings.find(x=>x.id===o.listing_id)
+    return l?.type === 'exchange' || String(o.status || '').startsWith('exchange')
+  })
   const userRows = [...state.users].sort((a,b)=>`${a.first_name || ''} ${a.last_name || ''}`.localeCompare(`${b.first_name || ''} ${b.last_name || ''}`)).map(u=>`
     <tr>
       <td>${escapeHtml(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario')} ${verificationBadgeHtml(u.verification_status === 'verified')}<p class="meta">${escapeHtml(u.email || '')}</p></td>
@@ -908,19 +957,29 @@ function adminView() {
       </div>
       <div class="footer-actions"><button class="secondary-btn" onclick="window.appActions.saveEmailTemplate('${t.id}')">Guardar plantilla</button></div>
     </div>`).join('')
-  return `<div class="container">
-    <div class="admin-title">
-      <div><h1>Dashboard admin</h1><p class="meta">Control operativo de usuarios, verificaciones y entrega de entradas.</p></div>
-      ${verificationQueue.length ? `<span class="admin-alert">! ${verificationQueue.length} verificación${verificationQueue.length === 1 ? '' : 'es'} pendiente${verificationQueue.length === 1 ? '' : 's'}</span>` : '<span class="badge ok">Sin verificaciones pendientes</span>'}
-    </div>
-    <div class="stats-grid">
-      <div class="stat"><strong>${state.matches.length}</strong><span>Partidos</span></div>
-      <div class="stat"><strong>${state.listings.length}</strong><span>Publicaciones</span></div>
-      <div class="stat"><strong>${state.orders.length}</strong><span>Órdenes</span></div>
-      <div class="stat"><strong>${pending}</strong><span>A validar</span></div>
-    </div>
-    <section class="admin-module panel">
-      <div class="section-head"><div><h2>Verificaciones de identidad</h2><p class="meta">Revisá documento, foto y prueba de vida antes de habilitar operaciones.</p></div>${verificationQueue.length ? '<span class="module-dot">!</span>' : ''}</div>
+  const settingsRows = state.siteSettings.map(s=>`
+    <div class="email-template-card">
+      <strong>${escapeHtml(s.key)}</strong>
+      <div class="field" style="margin-top:10px"><label>Texto editable</label><textarea id="setting_${s.id}" rows="4">${escapeHtml(s.value || '')}</textarea></div>
+      <div class="footer-actions"><button class="secondary-btn" onclick="window.appActions.saveSiteSetting('${s.id}')">Guardar mensaje</button></div>
+    </div>`).join('')
+  const section = state.adminSection || 'users'
+  const menu = [
+    ['users','Usuarios',state.users.length],
+    ['verifications','Verificaciones',verificationQueue.length],
+    ['exchanges','Intercambios',exchanges.length],
+    ['sales','Ventas',sales.length],
+    ['settings','Configuración',state.emailTemplates.length + state.siteSettings.length]
+  ]
+  const content = {
+    users: `<section class="admin-module panel">
+      <div class="section-head"><div><h2>Usuarios</h2><p class="meta">Editá datos, reputación, transacciones y verificación manual.</p></div></div>
+      <table class="admin-table"><thead><tr><th>Usuario</th><th>Verificación</th><th>Transacciones</th><th>Reputación</th><th>Acción</th></tr></thead><tbody>
+        ${userRows || `<tr><td colspan="5">No hay usuarios cargados.</td></tr>`}
+      </tbody></table>
+    </section>`,
+    verifications: `<section class="admin-module panel">
+      <div class="section-head"><div><h2>Verificaciones</h2><p class="meta">Revisá documento, foto y prueba de vida antes de habilitar operaciones.</p></div>${verificationQueue.length ? '<span class="module-dot">!</span>' : ''}</div>
       <table class="admin-table"><thead><tr><th>Usuario</th><th>Documento</th><th>Estado</th><th>Revisión</th></tr></thead><tbody>
         ${verificationQueue.length ? verificationQueue.map(u=>`
           <tr>
@@ -931,22 +990,46 @@ function adminView() {
           </tr>
         `).join('') : `<tr><td colspan="4">No hay verificaciones pendientes.</td></tr>`}
       </tbody></table>
-    </section>
-    <section class="admin-module panel">
-      <div class="section-head"><div><h2>Administrador de usuarios</h2><p class="meta">Editá datos, reputación, transacciones y verificación manual.</p></div></div>
-      <table class="admin-table"><thead><tr><th>Usuario</th><th>Verificación</th><th>Transacciones</th><th>Reputación</th><th>Acción</th></tr></thead><tbody>
-        ${userRows || `<tr><td colspan="5">No hay usuarios cargados.</td></tr>`}
-      </tbody></table>
-    </section>
-    <section class="admin-module panel">
-      <div class="section-head"><div><h2>Gestión de ventas e intercambios</h2><p class="meta">Cada tarjeta indica quién envía entradas, quién paga, qué debe recibir el admin y qué se libera a cada usuario.</p></div></div>
-      <div class="operation-disclaimer">Venta: el vendedor envía primero las entradas al admin. Cuando el admin confirma recepción, se avisa al comprador para pagar. Cuando el vendedor confirma pago recibido, el admin libera las entradas al comprador. Intercambio: cada usuario envía sus entradas al admin; cuando ambos lados están recibidos, el admin libera cada lote a la contraparte.</div>
-      <div class="operations-list">${operations.length ? operations.map(operationFlowCard).join('') : '<div class="empty">No hay operaciones todavía.</div>'}</div>
-    </section>
-    <section class="admin-module panel">
-      <div class="section-head"><div><h2>Plantillas de emails</h2><p class="meta">Configurá los textos por evento. Podés usar variables entre llaves dobles.</p></div></div>
+    </section>`,
+    exchanges: `<section class="admin-module panel">
+      <div class="section-head"><div><h2>Intercambios</h2><p class="meta">Quién entrega qué, a quién se libera y qué falta confirmar.</p></div></div>
+      <div class="operation-disclaimer">${escapeHtml(siteSetting('exchange_disclaimer', 'Cada parte debe enviar sus entradas al admin. El intercambio se libera cuando ambos lotes estén recibidos.'))}</div>
+      <div class="operations-list">${exchanges.length ? exchanges.map(operationFlowCard).join('') : '<div class="empty">No hay intercambios todavía.</div>'}</div>
+    </section>`,
+    sales: `<section class="admin-module panel">
+      <div class="section-head"><div><h2>Ventas</h2><p class="meta">Seguimiento de entradas, pagos y liberación al comprador.</p></div></div>
+      <div class="operation-disclaimer">${escapeHtml(siteSetting('seller_disclaimer', 'El vendedor envía entradas al admin. El admin confirma recepción y avisa al comprador para pagar. Luego el vendedor confirma pago y el admin libera entradas.'))}</div>
+      <div class="operations-list">${sales.length ? sales.map(operationFlowCard).join('') : '<div class="empty">No hay ventas todavía.</div>'}</div>
+    </section>`,
+    settings: `<section class="admin-module panel">
+      <div class="section-head"><div><h2>Configuración</h2><p class="meta">Plantillas de email, disclaimers y mensajes editables.</p></div></div>
+      <h3>Plantillas de emails</h3>
       <div class="operations-list">${templateRows || '<div class="empty">No hay plantillas cargadas. Ejecutá el schema para crear las plantillas base.</div>'}</div>
+      <h3 style="margin-top:22px">Disclaimers y mensajes</h3>
+      <div class="operations-list">${settingsRows || '<div class="empty">No hay mensajes configurables. Ejecutá el schema para crear los mensajes base.</div>'}</div>
     </section>
+    `
+  }[section]
+  return `<div class="container admin-shell">
+    <aside class="admin-sidebar ${state.adminMenuOpen ? 'open' : ''}">
+      <button class="hamburger-btn" onclick="window.appActions.toggleAdminMenu()">☰</button>
+      <div class="admin-menu-list">
+        ${menu.map(([key,label,count])=>`<button class="${section===key?'active':''}" onclick="window.appActions.setAdminSection('${key}')"><span>${label}</span>${count ? `<b>${count}</b>` : ''}</button>`).join('')}
+      </div>
+    </aside>
+    <main class="admin-content">
+      <div class="admin-title">
+        <div><h1>Dashboard admin</h1><p class="meta">Control operativo de usuarios, verificaciones y entrega de entradas.</p></div>
+        ${verificationQueue.length ? `<span class="admin-alert">! ${verificationQueue.length} verificación${verificationQueue.length === 1 ? '' : 'es'} pendiente${verificationQueue.length === 1 ? '' : 's'}</span>` : '<span class="badge ok">Sin verificaciones pendientes</span>'}
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><strong>${state.users.length}</strong><span>Usuarios</span></div>
+        <div class="stat"><strong>${verificationQueue.length}</strong><span>Verificaciones</span></div>
+        <div class="stat"><strong>${sales.length}</strong><span>Ventas</span></div>
+        <div class="stat"><strong>${exchanges.length}</strong><span>Intercambios</span></div>
+      </div>
+      ${content}
+    </main>
   </div>`
 }
 
@@ -984,13 +1067,13 @@ function renderModal() {
   const sellerTicket = listingTicketSummary(l)
   const buyerTicket = exchangeWantedSummary(l)
   const saleSteps = `
-    <div class="operation-disclaimer">Flujo de venta: 1. El vendedor envía las entradas al admin. 2. El admin confirma recepción y avisa al comprador que puede pagar. 3. El comprador informa pago. 4. El vendedor confirma que recibió el pago. 5. El admin libera las entradas al comprador.</div>
+    <div class="operation-disclaimer">${escapeHtml(siteSetting('seller_disclaimer', 'Flujo de venta: 1. El vendedor envía las entradas al admin. 2. El admin confirma recepción y avisa al comprador que puede pagar. 3. El comprador informa pago. 4. El vendedor confirma que recibió el pago. 5. El admin libera las entradas al comprador.'))}</div>
     <div class="flow-grid">
       <div class="flow-leg"><span>Debe enviar entradas al admin</span><strong>${escapeHtml(seller)}</strong><em>${escapeHtml(sellerTicket)} · Estado: ${deliveryLabel[o.seller_delivery_status || 'pending']}</em></div>
       <div class="flow-leg"><span>Debe pagar al vendedor cuando el admin confirme entradas</span><strong>${escapeHtml(buyer)}</strong><em>Pago: ${paymentLabel[o.buyer_payment_status || 'pending']} · Recibe: ${deliveryLabel[o.buyer_delivery_status || 'pending']}</em></div>
     </div>`
   const exchangeSteps = `
-    <div class="operation-disclaimer">Flujo de intercambio: cada usuario envía sus entradas al admin. Cuando el admin tenga ambos lotes, libera las entradas del usuario 1 al usuario 2 y las del usuario 2 al usuario 1.</div>
+    <div class="operation-disclaimer">${escapeHtml(siteSetting('exchange_disclaimer', 'Flujo de intercambio: cada usuario envía sus entradas al admin. Cuando el admin tenga ambos lotes, libera las entradas del usuario 1 al usuario 2 y las del usuario 2 al usuario 1.'))}</div>
     <div class="flow-grid">
       <div class="flow-leg"><span>${escapeHtml(seller)} entrega a ${escapeHtml(buyer)}</span><strong>${escapeHtml(sellerTicket)}</strong><em>Usuario: ${deliveryLabel[o.seller_delivery_status || 'pending']} · Admin: ${deliveryLabel[o.admin_seller_delivery_status || 'pending']}</em></div>
       <div class="flow-leg"><span>${escapeHtml(buyer)} entrega a ${escapeHtml(seller)}</span><strong>${escapeHtml(buyerTicket)}</strong><em>Usuario: ${deliveryLabel[o.buyer_delivery_status || 'pending']} · Admin: ${deliveryLabel[o.admin_buyer_delivery_status || 'pending']}</em></div>
@@ -1077,6 +1160,15 @@ window.appActions = {
   setView,
   setAuthMode(mode){ state.authMode = mode; render() },
   toggleTheme: setTheme,
+  setAdminSection(section){
+    state.adminSection = section
+    state.adminMenuOpen = true
+    render()
+  },
+  toggleAdminMenu(){
+    state.adminMenuOpen = !state.adminMenuOpen
+    render()
+  },
   toggleNotifications(){
     state.notificationsOpen = !state.notificationsOpen
     render()
@@ -1346,21 +1438,22 @@ window.appActions = {
     if (!state.user) { state.view='auth'; render(); return }
     if (!canOperate()) return showMessage('Para comprar entradas primero tenés que completar la verificación de identidad y esperar la aprobación.', { title: 'Verificación requerida', tone: 'error' })
     const l = state.listings.find(x=>x.id===listingId)
+    if (!l || l.status !== 'active' || Number(l.quantity || 0) <= 0) return showMessage('Esta oferta ya no tiene entradas disponibles.', { title: 'Sin disponibilidad', tone: 'error' })
     if (l.seller_id === state.user.id) return showMessage('No podés comprar tus propias entradas.', { title: 'Operación no permitida' })
     const qty = Number(await askQuantity(l.quantity))
     if (!qty) return
     if (qty > Number(l.quantity)) return showMessage('No hay suficientes entradas disponibles.', { title: 'Cantidad no disponible', tone: 'error' })
-    const { data, error } = await supabase.from('orders').insert({
+    const { data, error } = await insertOrderWithFallback({
       listing_id: l.id, buyer_id: state.user.id, seller_id: l.seller_id, quantity: qty, total: qty * Number(l.price || 0), status:'pending_payment',
       seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', buyer_payment_status:'pending', seller_payment_status:'pending'
-    }).select().single()
+    })
     if (error) { await showMessage(error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
     await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
     await notifyUsers([
       { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente', action:{ view:'order', id:data.id, template:'venta_pendiente', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } },
       { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada', action:{ view:'order', id:data.id, template:'compra_iniciada', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } }
     ])
-    await showMessage('Seguí los pasos del proceso seguro dentro del detalle de la operación. Usá el chat para coordinar y no hagas pagos ni entregas por fuera de la plataforma.', { title: 'Compra iniciada', tone: 'success' })
+    await showMessage(siteSetting('buyer_disclaimer', 'Seguí los pasos del proceso seguro dentro del detalle de la operación. Usá el chat para coordinar y no hagas pagos ni entregas por fuera de la plataforma.'), { title: 'Compra iniciada', tone: 'success' })
     await loadAll()
     state.view='my'
     render()
@@ -1371,10 +1464,10 @@ window.appActions = {
     if (!canOperate()) return showMessage('Para intercambiar entradas primero tenés que completar la verificación de identidad y esperar la aprobación.', { title: 'Verificación requerida', tone: 'error' })
     const l = state.listings.find(x=>x.id===listingId)
     if (l.seller_id === state.user.id) return showMessage('No podés ofertar sobre tu propia publicación.', { title: 'Operación no permitida' })
-    const { data, error } = await supabase.from('orders').insert({
+    const { data, error } = await insertOrderWithFallback({
       listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:1,total:0,status:'exchange_pending',
       seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', admin_buyer_delivery_status:'pending'
-    }).select().single()
+    })
     if (error) await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
     else {
       await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio', { view:'order', id:data.id, template:'intercambio_oferta', vars:{ partido:listingTicketSummary(l), comprador:userName(state.user.id), vendedor:userName(l.seller_id) } })
@@ -1806,6 +1899,14 @@ window.appActions = {
     const { error } = await supabase.from('email_templates').update(payload).eq('id', id)
     if (error) return showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
     await showMessage('La plantilla fue actualizada.', { title: 'Plantilla guardada', tone: 'success' })
+    await loadAll()
+    render()
+  },
+  async saveSiteSetting(id){
+    const value = document.getElementById(`setting_${id}`)?.value || ''
+    const { error } = await supabase.from('site_settings').update({ value }).eq('id', id)
+    if (error) return showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
+    await showMessage('El mensaje fue actualizado.', { title: 'Configuración guardada', tone: 'success' })
     await loadAll()
     render()
   },

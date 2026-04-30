@@ -130,6 +130,13 @@ create table if not exists email_templates (
   created_at timestamp default now()
 );
 
+create table if not exists site_settings (
+  id uuid primary key default gen_random_uuid(),
+  key text unique,
+  value text,
+  created_at timestamp default now()
+);
+
 -- Compatibilidad con bases creadas por versiones anteriores.
 -- CREATE TABLE IF NOT EXISTS no agrega columnas si la tabla ya existia.
 alter table users add column if not exists email text unique;
@@ -243,6 +250,10 @@ alter table email_templates add column if not exists body text;
 alter table email_templates add column if not exists enabled boolean default true;
 alter table email_templates add column if not exists created_at timestamp default now();
 
+alter table site_settings add column if not exists key text;
+alter table site_settings add column if not exists value text;
+alter table site_settings add column if not exists created_at timestamp default now();
+
 insert into email_templates (event_key, subject, body, enabled)
 values
 ('registro', 'Bienvenido a Entradas FIFA', 'Hola {{nombre}}, tu cuenta fue creada. Verificá tu identidad para operar.', true),
@@ -253,6 +264,14 @@ values
 ('verificacion_rechazada', 'Verificación rechazada', 'Tu verificación fue rechazada. Motivo: {{motivo}}', true)
 on conflict (event_key) do nothing;
 
+insert into site_settings (key, value)
+values
+('buyer_disclaimer', 'Seguí los pasos del proceso seguro. No hagas pagos ni entregas por fuera de la plataforma.'),
+('seller_disclaimer', 'Enviá las entradas al admin antes de solicitar pago. El admin liberará las entradas cuando el pago esté confirmado.'),
+('exchange_disclaimer', 'Cada parte debe enviar sus entradas al admin. El intercambio se libera cuando ambos lotes estén recibidos.'),
+('verification_disclaimer', 'Para operar necesitás subir documentación y completar prueba de vida. Un administrador revisará la solicitud.')
+on conflict (key) do nothing;
+
 alter table users enable row level security;
 alter table matches enable row level security;
 alter table listings enable row level security;
@@ -261,6 +280,7 @@ alter table messages enable row level security;
 alter table notifications enable row level security;
 alter table reviews enable row level security;
 alter table email_templates enable row level security;
+alter table site_settings enable row level security;
 
 drop policy if exists "open users" on users;
 drop policy if exists "open matches" on matches;
@@ -270,6 +290,7 @@ drop policy if exists "open messages" on messages;
 drop policy if exists "open notifications" on notifications;
 drop policy if exists "open reviews" on reviews;
 drop policy if exists "open email_templates" on email_templates;
+drop policy if exists "open site_settings" on site_settings;
 
 create policy "open users" on users for all using (true) with check (true);
 create policy "open matches" on matches for all using (true) with check (true);
@@ -279,6 +300,7 @@ create policy "open messages" on messages for all using (true) with check (true)
 create policy "open notifications" on notifications for all using (true) with check (true);
 create policy "open reviews" on reviews for all using (true) with check (true);
 create policy "open email_templates" on email_templates for all using (true) with check (true);
+create policy "open site_settings" on site_settings for all using (true) with check (true);
 
 insert into storage.buckets (id, name, public)
 values ('profile-photos', 'profile-photos', true),
