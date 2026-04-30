@@ -6,6 +6,7 @@ const app = document.getElementById('app')
 let activeCameraStream = null
 let operationRefreshTimer = null
 let loadingTimer = null
+let backgroundRefreshTimer = null
 
 let state = {
   session: null,
@@ -182,6 +183,11 @@ const money = (n, c = 'ARS') => {
   if (n === null || n === undefined) return 'Sin precio'
   return new Intl.NumberFormat('es-AR', { style:'currency', currency:c === 'USD' ? 'USD' : 'ARS', maximumFractionDigits:0 }).format(Number(n))
 }
+
+const withTimeout = (promise, ms = 8500, label = 'Operación') => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} tardó demasiado. Probá de nuevo en unos segundos.`)), ms))
+])
 
 const userTimeZone = () => state.profile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Argentina/Buenos_Aires'
 const fmtDate = (d) => {
@@ -447,14 +453,14 @@ async function sendEmailNotice(userId, subject, message, actionUrl = window.loca
   if (!userId || !subject || !message) return
   try {
     const { data: { session } } = await supabase.auth.getSession()
-    const response = await fetch('/api/send-email', {
+    const response = await withTimeout(fetch('/api/send-email', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
       },
       body: JSON.stringify({ user_id: userId, subject, message, action_url: actionUrl })
-    })
+    }), 6000, 'Envío de email')
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}))
       console.warn('No se pudo enviar email', detail)
@@ -479,28 +485,32 @@ function emailCopy(eventKey, fallbackSubject, fallbackMessage, vars = {}) {
 
 async function notifyUser(userId, message, subject = `Nuevo aviso en ${APP_NAME}`, action = {}) {
   if (!userId || !message) return
-  const copy = emailCopy(action.template, subject, message, action.vars || {})
-  const payload = {
-    user_id: userId,
-    message: copy.message,
-    subject: copy.subject,
-    action_view: action.view || null,
-    action_id: action.id ? String(action.id) : null
-  }
-  let { error } = await supabase.from('notifications').insert(payload)
-  if (error && (error.message?.includes('action_view') || error.message?.includes('subject'))) {
-    const retry = await supabase.from('notifications').insert({ user_id:userId, message })
-    error = retry.error
-  }
-  if (error) {
+  try {
+    const copy = emailCopy(action.template, subject, message, action.vars || {})
+    const payload = {
+      user_id: userId,
+      message: copy.message,
+      subject: copy.subject,
+      action_view: action.view || null,
+      action_id: action.id ? String(action.id) : null
+    }
+    let { error } = await withTimeout(supabase.from('notifications').insert(payload), 4500, 'Notificación')
+    if (error && (error.message?.includes('action_view') || error.message?.includes('subject'))) {
+      const retry = await withTimeout(supabase.from('notifications').insert({ user_id:userId, message }), 4500, 'Notificación')
+      error = retry.error
+    }
+    if (error) {
+      console.warn('No se pudo crear la notificación', error)
+      return
+    }
+    sendEmailNotice(userId, copy.subject, copy.message)
+  } catch (error) {
     console.warn('No se pudo crear la notificación', error)
-    return
   }
-  await sendEmailNotice(userId, copy.subject, copy.message)
 }
 
 async function notifyUsers(notices) {
-  await Promise.all((notices || []).map(notice => notifyUser(notice.user_id, notice.message, notice.subject, notice.action)))
+  await Promise.allSettled((notices || []).map(notice => notifyUser(notice.user_id, notice.message, notice.subject, notice.action)))
 }
 
 async function insertOrderWithFallback(payload) {
@@ -553,24 +563,30 @@ async function init({ respectPath = true } = {}) {
     return
   }
   if (respectPath) state.view = viewFromPath()
-  const { data: { session } } = await supabase.auth.getSession()
+  const { data: { session } } = await withTimeout(supabase.auth.getSession(), 8000, 'Sesión')
   state.session = session
   state.user = session?.user || null
   if (state.user) await ensureProfile()
-  await loadAll()
+  try {
+    await loadAll()
+  } catch (error) {
+    console.warn('Carga inicial incompleta', error)
+  }
   render()
   supabase.auth.onAuthStateChange(async (_event, session) => {
     state.session = session
     state.user = session?.user || null
-    if (state.user) await ensureProfile()
-    await loadAll()
+    if (state.user) {
+      try { await ensureProfile() } catch (error) { console.warn('Perfil incompleto', error) }
+    }
+    try { await loadAll() } catch (error) { console.warn('Carga tras auth incompleta', error) }
     render()
   })
   updateRoute(state.view, true)
 }
 
 async function ensureProfile() {
-  const { data } = await supabase.from('users').select('*').eq('id', state.user.id).maybeSingle()
+  const { data } = await withTimeout(supabase.from('users').select('*').eq('id', state.user.id).maybeSingle(), 8000, 'Perfil')
   if (!data) {
     const meta = state.user.user_metadata || {}
     const fullName = (meta.full_name || meta.name || '').trim().split(' ')
@@ -591,22 +607,26 @@ async function ensureProfile() {
       role: ADMIN_EMAILS.includes(state.user.email) ? 'admin' : 'user'
     })
   }
-  const { data: profile } = await supabase.from('users').select('*').eq('id', state.user.id).maybeSingle()
+  const { data: profile } = await withTimeout(supabase.from('users').select('*').eq('id', state.user.id).maybeSingle(), 8000, 'Perfil')
   state.profile = profile
 }
 
 async function loadAll() {
-  const [m, l] = await Promise.all([
+  const [m, l, usersResult, reviewsResult, templatesResult, settingsResult] = await withTimeout(Promise.all([
     supabase.from('matches').select('*').order('match_number', { ascending:true }),
-    supabase.from('listings').select('*').order('created_at', { ascending:false })
-  ])
-  let users = await supabase.from('users').select('*')
-  if (users.error) users = await supabase.from('users').select('id,first_name,last_name,verification_status')
-  let reviews = await supabase.from('reviews').select('*').order('created_at', { ascending:false })
+    supabase.from('listings').select('*').order('created_at', { ascending:false }),
+    supabase.from('users').select('*'),
+    supabase.from('reviews').select('*').order('created_at', { ascending:false }).limit(300),
+    isAdmin() ? supabase.from('email_templates').select('*').order('event_key') : Promise.resolve({ data: [] }),
+    supabase.from('site_settings').select('*').order('key')
+  ]), 9000, 'Carga de datos')
+  let users = usersResult
+  if (users.error) users = await withTimeout(supabase.from('users').select('id,first_name,last_name,verification_status,avatar_url,seller_rating,seller_reviews_count,seller_sales_count,city,country'), 6500, 'Usuarios')
+  let reviews = reviewsResult
   if (reviews.error) reviews = { data: [] }
-  let templates = isAdmin() ? await supabase.from('email_templates').select('*').order('event_key') : { data: [] }
+  let templates = templatesResult
   if (templates.error) templates = { data: [] }
-  let settings = await supabase.from('site_settings').select('*').order('key')
+  let settings = settingsResult
   if (settings.error) settings = { data: [] }
   state.matches = m.data || []
   state.listings = l.data || []
@@ -618,22 +638,37 @@ async function loadAll() {
     const ordersQuery = isAdmin()
       ? supabase.from('orders').select('*').order('created_at', { ascending:false })
       : supabase.from('orders').select('*').or(`buyer_id.eq.${state.user.id},seller_id.eq.${state.user.id}`).order('created_at', { ascending:false })
-    const [orders, notifs, orderMessages] = await Promise.all([
+    const [orders, notifs] = await withTimeout(Promise.all([
       ordersQuery,
-      supabase.from('notifications').select('*').eq('user_id', state.user.id).order('created_at', { ascending:false }),
-      supabase.from('messages').select('*').order('created_at', { ascending:true })
-    ])
+      supabase.from('notifications').select('*').eq('user_id', state.user.id).order('created_at', { ascending:false }).limit(80)
+    ]), 8000, 'Operaciones')
     state.orders = orders.data || []
     state.notifications = notifs.data || []
-    if (!orderMessages.error) {
-      const ids = new Set(state.orders.map(order => order.id))
-      state.messages = (orderMessages.data || []).filter(msg => ids.has(msg.order_id))
+    const ids = state.orders.map(order => order.id).filter(Boolean)
+    if (ids.length) {
+      const orderMessages = await withTimeout(supabase.from('messages').select('*').in('order_id', ids).order('created_at', { ascending:true }).limit(500), 7000, 'Mensajes')
+      if (!orderMessages.error) state.messages = orderMessages.data || []
+    } else {
+      state.messages = []
     }
   } else {
     state.orders = []
     state.notifications = []
     state.messages = []
   }
+}
+
+function scheduleBackgroundRefresh(delay = 120) {
+  if (supabaseConfigMissing) return
+  if (backgroundRefreshTimer) clearTimeout(backgroundRefreshTimer)
+  backgroundRefreshTimer = setTimeout(async () => {
+    try {
+      await loadAll()
+      render()
+    } catch (error) {
+      console.warn('No se pudo refrescar en segundo plano', error)
+    }
+  }, delay)
 }
 
 function minPrice(matchId) {
@@ -664,17 +699,8 @@ async function setView(v, options = {}) {
     state.selectedMatchId = null
   }
   if (options.route !== false) updateRoute(v, Boolean(options.replace))
-  if (!supabaseConfigMissing) {
-    showLoading('Actualizando información...')
-    try {
-      await loadAll()
-    } catch (error) {
-      await showMessage(error.message || 'No se pudo actualizar la información.', { title:'Error de actualización', tone:'error' })
-    } finally {
-      hideLoading()
-    }
-  }
   render()
+  scheduleBackgroundRefresh()
 }
 
 function setTheme() {
@@ -1353,12 +1379,14 @@ function notificationsView() {
 async function openOrder(id) {
   const localOrder = state.orders.find(x=>x.id===id)
   if (!localOrder && !isAdmin()) return
-  const fresh = await supabase.from('orders').select('*').eq('id', id).maybeSingle()
+  const [fresh, messages] = await withTimeout(Promise.all([
+    supabase.from('orders').select('*').eq('id', id).maybeSingle(),
+    supabase.from('messages').select('*').eq('order_id', id).order('created_at', { ascending:true }).limit(250)
+  ]), 8500, 'Detalle de operación')
   const order = fresh.data || localOrder
   state.selectedOrder = order
-  const { data } = await supabase.from('messages').select('*').eq('order_id', id).order('created_at', { ascending:true })
-  replaceOrderMessages(id, data || [])
-  markOrderMessagesSeen(id, data || [])
+  replaceOrderMessages(id, messages.data || [])
+  markOrderMessagesSeen(id, messages.data || [])
   renderModal({ autoChatBottom:true })
   startOperationAutoRefresh()
 }
@@ -1374,10 +1402,17 @@ function startOperationAutoRefresh() {
     if (['reviewComment', 'reviewRating'].includes(document.activeElement?.id)) return
     const previousOrderMessages = state.messages.filter(msg => msg.order_id === state.selectedOrder.id)
     const previousLatest = latestMessageValue(previousOrderMessages)
-    const [orderResult, messagesResult] = await Promise.all([
-      supabase.from('orders').select('*').eq('id', state.selectedOrder.id).maybeSingle(),
-      supabase.from('messages').select('*').eq('order_id', state.selectedOrder.id).order('created_at', { ascending:true })
-    ])
+    let orderResult
+    let messagesResult
+    try {
+      ;[orderResult, messagesResult] = await withTimeout(Promise.all([
+        supabase.from('orders').select('*').eq('id', state.selectedOrder.id).maybeSingle(),
+        supabase.from('messages').select('*').eq('order_id', state.selectedOrder.id).order('created_at', { ascending:true }).limit(250)
+      ]), 6500, 'Actualización de operación')
+    } catch (error) {
+      console.warn('No se pudo actualizar la operación', error)
+      return
+    }
     if (orderResult.data) state.selectedOrder = orderResult.data
     const nextMessages = messagesResult.error ? previousOrderMessages : (messagesResult.data || [])
     const hasNewMessage = latestMessageValue(nextMessages) > previousLatest
@@ -1608,15 +1643,8 @@ window.appActions = {
   async setAdminSection(section){
     state.adminSection = section
     state.adminMenuOpen = true
-    showLoading('Actualizando módulo...')
-    try {
-      await loadAll()
-    } catch (error) {
-      await showMessage(error.message || 'No se pudo actualizar el módulo.', { title:'Error de actualización', tone:'error' })
-    } finally {
-      hideLoading()
-    }
     render()
+    scheduleBackgroundRefresh()
   },
   toggleAdminMenu(){
     state.adminMenuOpen = !state.adminMenuOpen
@@ -1742,7 +1770,14 @@ window.appActions = {
     const email = document.getElementById('loginEmail').value.trim()
     const password = document.getElementById('loginPass').value
     showLoading('Iniciando sesión...')
-    const { error } = await supabase.auth.signInWithPassword({ email, password }).finally(() => hideLoading())
+    let error = null
+    try {
+      ;({ error } = await withTimeout(supabase.auth.signInWithPassword({ email, password }), 9000, 'Inicio de sesión'))
+    } catch (err) {
+      error = err
+    } finally {
+      hideLoading()
+    }
     if (error) await showMessage(error.message, { title: 'No se pudo ingresar', tone: 'error' })
     else {
       showLoading('Preparando tu cuenta...')
@@ -1762,19 +1797,21 @@ window.appActions = {
     try {
       let email = identifier
       if (!identifier.includes('@')) {
-        const { data } = await supabase.from('users').select('email').eq('document_number', identifier).maybeSingle()
+        const { data } = await withTimeout(supabase.from('users').select('email').eq('document_number', identifier).maybeSingle(), 7000, 'Búsqueda de cuenta')
         email = data?.email || ''
       }
       if (!email) {
         hideLoading()
         return showMessage('No encontramos una cuenta con ese documento. Probá ingresando tu email.', { title: 'Cuenta no encontrada', tone: 'error' })
       }
-      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/ingresar` })
+      const { error } = await withTimeout(supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/ingresar` }), 9000, 'Recuperación')
       hideLoading()
       if (error) return showMessage(error.message, { title: 'No se pudo enviar el email', tone: 'error' })
       await showMessage('Te enviamos un email con el enlace para renovar la contraseña.', { title: 'Revisá tu correo', tone: 'success' })
       state.authMode = 'login'
       render()
+    } catch (error) {
+      await showMessage(error.message || 'No se pudo preparar la recuperación.', { title: 'No se pudo continuar', tone: 'error' })
     } finally {
       hideLoading()
     }
@@ -1788,11 +1825,21 @@ window.appActions = {
     const document_type = document.getElementById('regDocType').value
     const document_number = document.getElementById('regDoc').value.trim()
     const document_country = document.getElementById('regDocCountry').value
-    const { data, error } = await supabase.auth.signUp({ email, password, options:{ data:{ first_name,last_name,country,document_type,document_number,document_country } } })
+    let data = null
+    let error = null
+    try {
+      ;({ data, error } = await withTimeout(supabase.auth.signUp({ email, password, options:{ data:{ first_name,last_name,country,document_type,document_number,document_country } } }), 10000, 'Registro'))
+    } catch (err) {
+      error = err
+    }
     if (error) { await showMessage(error.message, { title: 'No se pudo crear la cuenta', tone: 'error' }); return }
     if (data.user) {
-      await supabase.from('users').upsert({ id:data.user.id,email,first_name,last_name,country,document_type,document_number,document_country,account_status:'active',verification_status:'not_verified',preferred_currency:'ARS',preferred_language:'es',timezone:'America/Argentina/Buenos_Aires' })
-      await notifyUser(data.user.id, 'Tu cuenta fue creada. Verificá tu identidad para poder comprar, vender e intercambiar.', `Bienvenido a ${APP_NAME}`, { view:'profile', template:'registro', vars:{ nombre:first_name } })
+      try {
+        await withTimeout(supabase.from('users').upsert({ id:data.user.id,email,first_name,last_name,country,document_type,document_number,document_country,account_status:'active',verification_status:'not_verified',preferred_currency:'ARS',preferred_language:'es',timezone:'America/Argentina/Buenos_Aires' }), 8000, 'Perfil inicial')
+      } catch (err) {
+        console.warn('No se pudo crear el perfil inicial', err)
+      }
+      notifyUser(data.user.id, 'Tu cuenta fue creada. Verificá tu identidad para poder comprar, vender e intercambiar.', `Bienvenido a ${APP_NAME}`, { view:'profile', template:'registro', vars:{ nombre:first_name } })
     }
     await showMessage('Usuario creado. Iniciá sesión.', { title: 'Cuenta lista', tone: 'success' })
   },
@@ -1971,7 +2018,7 @@ window.appActions = {
       data = result.data
       await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
       await addSystemMessage(data.id, `Recordatorio de seguridad: no transfieras dinero hasta que el administrador confirme en esta operación que recibió las entradas. El vendedor debe enviar las entradas a ${PLATFORM_TRANSFER_EMAIL}.`)
-      await notifyUsers([
+      notifyUsers([
         { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente', action:{ view:'order', id:data.id, template:'venta_pendiente', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } },
         { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada', action:{ view:'order', id:data.id, template:'compra_iniciada', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } }
       ])
@@ -2015,7 +2062,7 @@ window.appActions = {
         return
       }
       await addSystemMessage(data.id, `Recordatorio de seguridad: ambas partes deben enviar sus entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador verificará ambos lotes antes de liberar el intercambio.`)
-      await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio', { view:'order', id:data.id, template:'intercambio_oferta', vars:{ partido:listingTicketSummary(l), comprador:userName(state.user.id), vendedor:userName(l.seller_id) } })
+      notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio', { view:'order', id:data.id, template:'intercambio_oferta', vars:{ partido:listingTicketSummary(l), comprador:userName(state.user.id), vendedor:userName(l.seller_id) } })
       await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; updateRoute('my'); render()
     } finally {
       hideLoading()
