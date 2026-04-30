@@ -289,7 +289,7 @@ values
 ('buyer_disclaimer', 'Seguí los pasos del proceso seguro. No hagas pagos ni entregas por fuera de la plataforma.'),
 ('seller_disclaimer', 'Enviá las entradas al admin antes de solicitar pago. El admin liberará las entradas cuando el pago esté confirmado.'),
 ('exchange_disclaimer', 'Cada parte debe enviar sus entradas al admin. El intercambio se libera cuando ambos lotes estén recibidos.'),
-('verification_disclaimer', 'Para operar necesitás subir documentación y completar prueba de vida. Un administrador revisará la solicitud.')
+('verification_disclaimer', 'Para operar necesitás subir documentación y completar reconocimiento facial. Un administrador revisará la solicitud.')
 on conflict (key) do nothing;
 
 insert into storage.buckets (id, name, public)

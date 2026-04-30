@@ -26,6 +26,8 @@ let state = {
   adminMenuOpen: true,
   operationFilters: { active:true, waiting:true, completed:true, cancelled:true, issue:true },
   publicationFilters: { available:true, finished:true },
+  homeOfferType: 'all',
+  homeShowNoOffers: false,
   notificationsOpen: false,
   prefMatchId: '',
   selectedMatch: null,
@@ -195,6 +197,18 @@ const flagFiles = {
   IRQ:'iq.png', NOR:'no.png', ALG:'dz.png', AUT:'at.png', JOR:'jo.png', GHA:'gh.png', PAN:'pa.png',
   ENG:'gb-eng.png', CRO:'hr.png', POR:'pt.png', COD:'cd.png', UZB:'uz.png', COL:'co.png'
 }
+
+const countryNames = {
+  ARG:'Argentina', MEX:'México', RSA:'Sudáfrica', KOR:'Corea del Sur', CZE:'República Checa', CAN:'Canadá', BIH:'Bosnia y Herzegovina',
+  USA:'Estados Unidos', PAR:'Paraguay', HAI:'Haití', SCO:'Escocia', AUS:'Australia', TUR:'Turquía', BRA:'Brasil',
+  MAR:'Marruecos', QAT:'Qatar', SUI:'Suiza', CIV:'Costa de Marfil', ECU:'Ecuador', GER:'Alemania', CUR:'Curazao',
+  NED:'Países Bajos', JPN:'Japón', SWE:'Suecia', TUN:'Túnez', KSA:'Arabia Saudita', URU:'Uruguay', ESP:'España',
+  CPV:'Cabo Verde', IRN:'Irán', NZL:'Nueva Zelanda', BEL:'Bélgica', EGY:'Egipto', FRA:'Francia', SEN:'Senegal',
+  IRQ:'Irak', NOR:'Noruega', ALG:'Argelia', AUT:'Austria', JOR:'Jordania', GHA:'Ghana', PAN:'Panamá',
+  ENG:'Inglaterra', CRO:'Croacia', POR:'Portugal', COD:'República Democrática del Congo', UZB:'Uzbekistán', COL:'Colombia'
+}
+
+const countryName = (code, fallback = '') => countryNames[code] || fallback || code || ''
 
 const flagImg = (code, className = 'flag-thumb') => {
   const file = flagFiles[code]
@@ -551,8 +565,17 @@ function minPrice(matchId) {
   return money(min, c)
 }
 
-function hasActiveOffers(matchId) {
-  return state.listings.some(l => Number(l.match_id) === Number(matchId) && l.status === 'active' && Number(l.quantity || 0) > 0)
+function activeOffers(matchId, type = 'all') {
+  return state.listings.filter(l =>
+    Number(l.match_id) === Number(matchId) &&
+    l.status === 'active' &&
+    Number(l.quantity || 0) > 0 &&
+    (type === 'all' || (type === 'sale' ? l.type !== 'exchange' : l.type === 'exchange'))
+  )
+}
+
+function hasActiveOffers(matchId, type = 'all') {
+  return activeOffers(matchId, type).length > 0
 }
 
 async function setView(v, options = {}) {
@@ -592,7 +615,7 @@ function nav() {
         <button class="${state.view==='my'?'active':''}" onclick="window.appActions.requireLogin('my')">Mis operaciones</button>
         <button class="${state.view==='profile'?'active':''}" onclick="window.appActions.requireLogin('profile')">Mi perfil</button>
         ${isAdmin()?`<button class="${state.view==='admin'?'active':''}" onclick="window.appActions.setView('admin')">Admin</button>`:''}
-        <button class="pill-btn ghost" onclick="window.appActions.toggleTheme()">${state.theme==='dark'?'☀️ Claro':'🌙 Oscuro'}</button>
+        <button class="pill-btn ghost theme-toggle" title="${state.theme==='dark'?'Modo claro':'Modo oscuro'}" onclick="window.appActions.toggleTheme()">${state.theme==='dark'?'☀️':'🌙'}</button>
         ${state.user?`<button class="pill-btn ghost notification-trigger" onclick="window.appActions.toggleNotifications()">🔔 ${unread}</button><button class="pill-btn ghost" onclick="window.appActions.logout()">Salir</button>`:`<button class="pill-btn primary" onclick="window.appActions.setView('auth')">Ingresar</button>`}
       </div>
     </div>
@@ -626,6 +649,11 @@ function notificationsMini() {
 function home() {
   const phases = [...new Set(state.matches.map(m => normalizedPhase(m.phase || 'groups')))].sort((a,b) => phaseRank(a) - phaseRank(b))
   const venues = [...new Set(state.matches.map(m => `${m.city || ''} - ${m.stadium || ''}`))]
+  const countries = [...new Map(state.matches.flatMap(m => [
+    [m.home_code, countryName(m.home_code, m.home_team)],
+    [m.away_code, countryName(m.away_code, m.away_team)]
+  ]).filter(([code]) => Boolean(code))).entries()].sort((a,b) => a[1].localeCompare(b[1], 'es'))
+  const visibleMatches = filterHomeMatches()
   return `
   <div class="container">
     <section class="hero">
@@ -639,6 +667,7 @@ function home() {
       <div class="hero-side">
         <h3>Operación segura</h3>
         <p class="meta">El vendedor informa el medio de cobro, el comprador avisa el pago y el administrador puede validar el proceso desde el panel.</p>
+        <button class="pill-btn primary" onclick="window.appActions.openHowItWorks()">Cómo funciona</button>
         <div class="stats-grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">
           <div class="stat"><strong>${state.matches.length}</strong><span>Partidos</span></div>
           <div class="stat"><strong>${state.listings.filter(l=>l.status==='active').length}</strong><span>Ofertas</span></div>
@@ -649,10 +678,31 @@ function home() {
       <input class="input" id="q" placeholder="Buscar por país, código, ciudad o estadio..." oninput="window.appActions.applyFilters()" />
       <select class="select" id="phaseFilter" onchange="window.appActions.applyFilters()"><option value="">Todas las fases</option>${phases.map(p=>`<option value="${p}">${phaseLabels[p]||p}</option>`).join('')}</select>
       <select class="select" id="venueFilter" onchange="window.appActions.applyFilters()"><option value="">Todas las sedes</option>${venues.map(v=>`<option value="${v}">${v}</option>`).join('')}</select>
-      <select class="select" id="countryFilter" onchange="window.appActions.applyFilters()"><option value="">Todos los países</option>${[...new Set(state.matches.flatMap(m=>[m.home_code,m.away_code]).filter(Boolean))].sort().map(c=>`<option value="${c}">${c}</option>`).join('')}</select>
+      <select class="select" id="countryFilter" onchange="window.appActions.applyFilters()"><option value="">Todos los países</option>${countries.map(([code,name])=>`<option value="${code}">${escapeHtml(name)}</option>`).join('')}</select>
+      <select class="select" id="offerTypeFilter" onchange="window.appActions.applyFilters()"><option value="all" ${state.homeOfferType==='all'?'selected':''}>Ventas e intercambios</option><option value="sale" ${state.homeOfferType==='sale'?'selected':''}>Solo ventas</option><option value="exchange" ${state.homeOfferType==='exchange'?'selected':''}>Solo intercambios</option></select>
+      <label class="filter-check"><input type="checkbox" id="showNoOffersFilter" onchange="window.appActions.applyFilters()" ${state.homeShowNoOffers ? 'checked' : ''}> Mostrar partidos sin ofertas</label>
     </div>
-    <div id="matchesWrap">${matchesHtml(state.matches)}</div>
+    <div id="matchesWrap">${matchesHtml(visibleMatches)}</div>
   </div>`
+}
+
+function filterHomeMatches() {
+  const q = document.getElementById('q')?.value.toLowerCase() || ''
+  const phase = document.getElementById('phaseFilter')?.value || ''
+  const venue = document.getElementById('venueFilter')?.value || ''
+  const country = document.getElementById('countryFilter')?.value || ''
+  const offerType = document.getElementById('offerTypeFilter')?.value || state.homeOfferType
+  const showNoOffers = document.getElementById('showNoOffersFilter')?.checked ?? state.homeShowNoOffers
+  state.homeOfferType = offerType
+  state.homeShowNoOffers = showNoOffers
+  return state.matches.filter(m => {
+    const text = `${m.home_team} ${m.away_team} ${countryName(m.home_code)} ${countryName(m.away_code)} ${m.home_code} ${m.away_code} ${m.city} ${m.stadium}`.toLowerCase()
+    return (!q || text.includes(q)) &&
+      (!phase || normalizedPhase(m.phase) === phase) &&
+      (!venue || `${m.city || ''} - ${m.stadium || ''}` === venue) &&
+      (!country || m.home_code === country || m.away_code === country) &&
+      (showNoOffers || hasActiveOffers(m.id, offerType))
+  })
 }
 
 function matchesHtml(matches) {
@@ -675,7 +725,7 @@ function matchesHtml(matches) {
 
 function matchCard(m) {
   const price = minPrice(m.id)
-  const offers = hasActiveOffers(m.id)
+  const offers = hasActiveOffers(m.id, state.homeOfferType)
   return `
   <article class="match-card ${offers ? '' : 'no-offers'}">
     <div class="match-number">${m.match_number || m.id}</div>
@@ -698,12 +748,13 @@ function matchCard(m) {
 
 function authView() {
   const isRegister = state.authMode === 'register'
+  const isReset = state.authMode === 'reset'
   return `
   <div class="container">
     <div class="auth-shell">
       <div class="panel auth-panel">
-        <h2>${isRegister ? 'Crear cuenta' : 'Ingresar'}</h2>
-        <p class="meta">${isRegister ? 'Completá tus datos para publicar, comprar e intercambiar entradas.' : 'Entrá con tu email o con una cuenta social.'}</p>
+        <h2>${isRegister ? 'Crear cuenta' : isReset ? 'Recuperar contraseña' : 'Ingresar'}</h2>
+        <p class="meta">${isRegister ? 'Completá tus datos para publicar, comprar e intercambiar entradas.' : isReset ? 'Ingresá tu email o documento y te enviaremos un enlace para renovar la contraseña.' : 'Entrá con tu email o con Google.'}</p>
         ${isRegister ? `
         <div class="form-grid">
           <div class="field"><label>Nombre</label><input id="regFirst" class="input"></div>
@@ -715,15 +766,18 @@ function authView() {
         </div>
         <div class="auth-actions"><button class="pill-btn primary" onclick="window.appActions.register()">Crear cuenta</button></div>
         <button class="link-btn" onclick="window.appActions.setAuthMode('login')">Ya tengo cuenta</button>
+        ` : isReset ? `
+        <div class="field"><label>Email o número de documento</label><input id="resetIdentifier" class="input" placeholder="tu@email.com o DNI"></div>
+        <div class="auth-actions"><button class="pill-btn primary" onclick="window.appActions.resetPassword()">Enviar enlace de recuperación</button></div>
+        <button class="link-btn" onclick="window.appActions.setAuthMode('login')">Volver al ingreso</button>
         ` : `
         <div class="field"><label>Email</label><input id="loginEmail" class="input"></div>
         <div class="field"><label>Contraseña</label><input id="loginPass" type="password" class="input"></div>
         <div class="auth-actions"><button class="pill-btn primary" onclick="window.appActions.login()">Ingresar</button></div>
         <div class="social-login">
-          <button class="oauth-btn" onclick="window.appActions.oauthLogin('google')">Google</button>
-          <button class="oauth-btn" onclick="window.appActions.oauthLogin('apple')">Apple</button>
-          <button class="oauth-btn" onclick="window.appActions.oauthLogin('facebook')">Facebook</button>
+          <button class="oauth-btn google-btn" onclick="window.appActions.oauthLogin('google')"><span class="google-icon">G</span> Iniciar sesión con Google</button>
         </div>
+        <button class="link-btn" onclick="window.appActions.setAuthMode('reset')">Olvidé mi contraseña</button>
         <button class="link-btn" onclick="window.appActions.setAuthMode('register')">No tengo cuenta, registrarme</button>
         `}
       </div>
@@ -934,7 +988,7 @@ function profileView() {
       </section>
       <section class="profile-module">
         <h2>Verificación</h2>
-        <p class="meta">Subí tu foto de perfil, el frente de tu documento y completá una prueba de vida con cámara. Un administrador revisará que nombre, foto y número de documento coincidan.</p>
+        <p class="meta">Subí tu foto de perfil, el frente de tu documento y completá un reconocimiento facial con cámara. Un administrador revisará que nombre, foto y número de documento coincidan.</p>
         <div class="form-grid">${fieldHtml(documentFields, true)}</div>
         <div class="document-warning">
           El documento debe verse nítido y con buena luz. Podés tapar datos sensibles que no necesitamos, como número de trámite, códigos secundarios o domicilio. Deben quedar visibles foto, nombres y número de DNI/documento.
@@ -949,7 +1003,7 @@ function profileView() {
             <span>${locked ? uploadLockCopy : (p.identity_document_path ? `Documento recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB')}</span>
           </button>
           <button class="upload-card camera-card" type="button" onclick="window.appActions.startLivenessCheck()" ${locked ? 'disabled' : ''}>
-            <strong>3. Prueba de vida</strong>
+            <strong>3. Reconocimiento facial</strong>
             <span>${locked ? uploadLockCopy : (p.liveness_side_path && p.liveness_front_path ? `2 tomas recibidas · ${p.liveness_status || 'submitted'}` : 'Captura automática: perfil y frente.')}</span>
           </button>
         </div>
@@ -1088,7 +1142,7 @@ function adminView() {
       </tbody></table>
     </section>`,
     verifications: `<section class="admin-module panel">
-      <div class="section-head"><div><h2>Verificaciones</h2><p class="meta">Revisá documento, foto y prueba de vida antes de habilitar operaciones.</p></div>${verificationQueue.length ? '<span class="module-dot">!</span>' : ''}</div>
+      <div class="section-head"><div><h2>Verificaciones</h2><p class="meta">Revisá documento, foto y reconocimiento facial antes de habilitar operaciones.</p></div>${verificationQueue.length ? '<span class="module-dot">!</span>' : ''}</div>
       <table class="admin-table"><thead><tr><th>Usuario</th><th>Documento</th><th>Estado</th><th>Revisión</th></tr></thead><tbody>
         ${verificationQueue.length ? verificationQueue.map(u=>`
           <tr>
@@ -1420,6 +1474,44 @@ window.appActions = {
     if (type === 'publication' && key in state.publicationFilters) state.publicationFilters[key] = !state.publicationFilters[key]
     render()
   },
+  openHowItWorks(){
+    let modal = document.getElementById('modalRoot')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'modalRoot'
+      document.body.appendChild(modal)
+    }
+    modal.innerHTML = `
+      <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
+        <div class="modal how-modal">
+          <div class="modal-header"><h2>Cómo funciona</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+          <div class="modal-body">
+            <div class="how-grid">
+              <section class="how-card">
+                <h3>Comprar entradas</h3>
+                <ol>
+                  <li>Elegís el partido, categoría, sector y cantidad.</li>
+                  <li>La operación reserva esas entradas y el vendedor debe enviarlas a la cuenta segura de la plataforma.</li>
+                  <li>El administrador verifica que las entradas recibidas coincidan con la publicación.</li>
+                  <li>Recién cuando las entradas están verificadas, el comprador transfiere al vendedor y sube el comprobante.</li>
+                  <li>El vendedor confirma el pago recibido y el administrador libera las entradas al comprador.</li>
+                </ol>
+              </section>
+              <section class="how-card">
+                <h3>Intercambiar entradas</h3>
+                <ol>
+                  <li>Elegís la publicación de intercambio y la cantidad 1 a 1.</li>
+                  <li>Ambas partes envían sus entradas a ${PLATFORM_TRANSFER_EMAIL}.</li>
+                  <li>El administrador revisa los dos lotes para evitar confusiones.</li>
+                  <li>Cuando ambos lotes están verificados, la plataforma libera cada entrada a la contraparte.</li>
+                </ol>
+              </section>
+            </div>
+            <div class="operation-disclaimer">Importante: Entradas Mundial 2026 no gestiona ni retiene pagos. Nuestro rol es ordenar el proceso, verificar que las entradas estén disponibles antes del pago y dejar trazabilidad de cada paso para que comprador y vendedor operen con mayor confianza.</div>
+          </div>
+        </div>
+      </div>`
+  },
   async markNotificationRead(id){
     await supabase.from('notifications').update({ read:true }).eq('id', id)
     const notification = state.notifications.find(n => n.id === id)
@@ -1500,6 +1592,26 @@ window.appActions = {
       hideLoading()
     }
   },
+  async resetPassword(){
+    const identifier = document.getElementById('resetIdentifier')?.value.trim()
+    if (!identifier) return showMessage('Ingresá tu email o número de documento.', { title: 'Falta un dato', tone: 'error' })
+    showLoading('Preparando recuperación...')
+    let email = identifier
+    if (!identifier.includes('@')) {
+      const { data } = await supabase.from('users').select('email').eq('document_number', identifier).maybeSingle()
+      email = data?.email || ''
+    }
+    if (!email) {
+      hideLoading()
+      return showMessage('No encontramos una cuenta con ese documento. Probá ingresando tu email.', { title: 'Cuenta no encontrada', tone: 'error' })
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/ingresar` })
+    hideLoading()
+    if (error) return showMessage(error.message, { title: 'No se pudo enviar el email', tone: 'error' })
+    await showMessage('Te enviamos un email con el enlace para renovar la contraseña.', { title: 'Revisá tu correo', tone: 'success' })
+    state.authMode = 'login'
+    render()
+  },
   async register(){
     const email = document.getElementById('regEmail').value.trim()
     const password = document.getElementById('regPass').value
@@ -1516,18 +1628,7 @@ window.appActions = {
     await showMessage('Usuario creado. Iniciá sesión.', { title: 'Cuenta lista', tone: 'success' })
   },
   applyFilters(){
-    const q = document.getElementById('q').value.toLowerCase()
-    const phase = document.getElementById('phaseFilter').value
-    const venue = document.getElementById('venueFilter').value
-    const country = document.getElementById('countryFilter').value
-    const filtered = state.matches.filter(m => {
-      const text = `${m.home_team} ${m.away_team} ${m.home_code} ${m.away_code} ${m.city} ${m.stadium}`.toLowerCase()
-      return (!q || text.includes(q)) &&
-        (!phase || normalizedPhase(m.phase) === phase) &&
-        (!venue || `${m.city || ''} - ${m.stadium || ''}` === venue) &&
-        (!country || m.home_code === country || m.away_code === country)
-    })
-    document.getElementById('matchesWrap').innerHTML = matchesHtml(filtered)
+    document.getElementById('matchesWrap').innerHTML = matchesHtml(filterHomeMatches())
   },
   openMatch(id){
     if (!state.openMatchTabs.some(tabId => String(tabId) === String(id))) state.openMatchTabs.push(id)
@@ -1750,7 +1851,7 @@ window.appActions = {
   },
   openUploadModal(kind){
     if (isVerified()) {
-      return showMessage('Tu cuenta ya está verificada. Para proteger tu identidad, la foto de perfil, documento y prueba de vida quedan bloqueados.', { title: 'Cuenta verificada', tone: 'info' })
+      return showMessage('Tu cuenta ya está verificada. Para proteger tu identidad, la foto de perfil, documento y reconocimiento facial quedan bloqueados.', { title: 'Cuenta verificada', tone: 'info' })
     }
     const isAvatar = kind === 'avatar'
     let modal = document.getElementById('modalRoot')
@@ -1811,7 +1912,7 @@ window.appActions = {
     if (updateError) return showMessage(updateError.message, { title: 'No se pudo actualizar el perfil', tone: 'error' })
     this.closeVerificationModal()
     await ensureProfile()
-    await showMessage(kind === 'avatar' ? 'Tu foto de perfil fue actualizada.' : (state.profile?.identity_selfie_path ? 'Documento recibido. Tu verificación quedó pendiente de revisión.' : 'Documento recibido. Para enviar la verificación, completá también la prueba de vida.'), { title: kind === 'avatar' ? 'Foto actualizada' : 'Documento recibido', tone: 'success' })
+    await showMessage(kind === 'avatar' ? 'Tu foto de perfil fue actualizada.' : (state.profile?.identity_selfie_path ? 'Documento recibido. Tu verificación quedó pendiente de revisión.' : 'Documento recibido. Para enviar la verificación, completá también el reconocimiento facial.'), { title: kind === 'avatar' ? 'Foto actualizada' : 'Documento recibido', tone: 'success' })
     render()
   },
   openPaymentProofModal(orderId){
@@ -2041,9 +2142,9 @@ window.appActions = {
   },
   async startLivenessCheck(){
     if (isVerified()) {
-      return showMessage('Tu cuenta ya está verificada. La prueba de vida queda bloqueada para evitar cambios de identidad.', { title: 'Cuenta verificada', tone: 'info' })
+      return showMessage('Tu cuenta ya está verificada. El reconocimiento facial queda bloqueado para evitar cambios de identidad.', { title: 'Cuenta verificada', tone: 'info' })
     }
-    await showMessage('Vamos a tomar dos fotos automáticamente: primero con la cabeza girada levemente hacia un costado y después mirando al frente. Usá buena luz y mantené el rostro dentro del cuadro.', { title: 'Prueba de vida', tone: 'info' })
+    await showMessage('Vamos a tomar dos fotos automáticamente: primero con la cabeza girada levemente hacia un costado y después mirando al frente. Usá buena luz y mantené el rostro dentro del cuadro.', { title: 'Reconocimiento facial', tone: 'info' })
     if (!navigator.mediaDevices?.getUserMedia) return showMessage('Tu navegador no permite usar la cámara desde esta página.', { title: 'Cámara no disponible', tone: 'error' })
     let modal = document.getElementById('modalRoot')
     if (!modal) {
@@ -2054,7 +2155,7 @@ window.appActions = {
     modal.innerHTML = `
       <div class="modal-backdrop show">
         <div class="modal camera-modal">
-          <div class="modal-header"><h2>Prueba de vida</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+          <div class="modal-header"><h2>Reconocimiento facial</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
           <div class="modal-body">
             <div class="camera-layout">
               <div class="camera-stage">
@@ -2066,6 +2167,11 @@ window.appActions = {
                   <p id="livenessInstruction">Prepará la cámara...</p>
                 </div>
               </div>
+              <aside class="pose-guide">
+                <strong>Modelo de pose</strong>
+                <div id="posePreview" class="pose-preview front"><span></span></div>
+                <p>Primero girá el rostro 60° hacia un costado. Después mirá al frente, con buena luz y sin taparte la cara.</p>
+              </aside>
             </div>
           </div>
         </div>
@@ -2093,11 +2199,13 @@ window.appActions = {
     const step = document.getElementById('livenessStep')
     const countdown = document.getElementById('livenessCountdown')
     const guide = document.getElementById('faceGuide')
+    const preview = document.getElementById('posePreview')
     const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms))
     const guidedCapture = async (label, text, pose) => {
       if (step) step.textContent = label
       if (instruction) instruction.textContent = text
       if (guide) guide.className = `face-guide ${pose}`
+      if (preview) preview.className = `pose-preview ${pose}`
       for (let i = 3; i > 0; i--) {
         if (countdown) countdown.textContent = String(i)
         await wait(1000)
@@ -2131,11 +2239,11 @@ window.appActions = {
       if (updateError) throw updateError
       this.closeVerificationModal()
       await ensureProfile()
-      await showMessage(hasDocument ? 'Las dos tomas fueron recibidas. Tu verificación quedó pendiente de revisión.' : 'Las dos tomas fueron recibidas. Para enviar la verificación, subí también tu documento.', { title: 'Prueba de vida recibida', tone: 'success' })
+      await showMessage(hasDocument ? 'Las dos tomas fueron recibidas. Tu verificación quedó pendiente de revisión.' : 'Las dos tomas fueron recibidas. Para enviar la verificación, subí también tu documento.', { title: 'Reconocimiento facial recibido', tone: 'success' })
       render()
     } catch (error) {
       this.closeVerificationModal()
-      await showMessage(error.message || 'No se pudo completar la prueba de vida.', { title: 'Intentá de nuevo', tone: 'error' })
+      await showMessage(error.message || 'No se pudo completar el reconocimiento facial.', { title: 'Intentá de nuevo', tone: 'error' })
     }
   },
   async captureLivenessSelfie(){
@@ -2175,8 +2283,8 @@ window.appActions = {
             <div class="review-grid">
               ${filePreview(u.avatar_url, 'Foto de perfil')}
               ${filePreview(documentUrl, 'Documento')}
-              ${filePreview(sideUrl, 'Prueba de vida: costado')}
-              ${filePreview(frontUrl, 'Prueba de vida: frente')}
+              ${filePreview(sideUrl, 'Reconocimiento facial: costado')}
+              ${filePreview(frontUrl, 'Reconocimiento facial: frente')}
             </div>
             <div class="document-warning">Verificá que el documento sea nítido, que nombre y número coincidan con los datos del perfil, y que las dos tomas de vida correspondan a la misma persona.</div>
             ${verificationRejectReason(u.id)}
