@@ -202,6 +202,32 @@ function hideLoading() {
   document.getElementById('loadingRoot')?.remove()
 }
 
+async function sendEmailNotice(userId, subject, message, actionUrl = window.location.origin) {
+  if (!userId || !subject || !message) return
+  try {
+    const { error } = await supabase.functions.invoke('send-email', {
+      body: { user_id: userId, subject, message, action_url: actionUrl }
+    })
+    if (error) console.warn('No se pudo enviar email', error)
+  } catch (error) {
+    console.warn('No se pudo enviar email', error)
+  }
+}
+
+async function notifyUser(userId, message, subject = 'Nuevo aviso en Digital Guale') {
+  if (!userId || !message) return
+  const { error } = await supabase.from('notifications').insert({ user_id:userId, message })
+  if (error) {
+    console.warn('No se pudo crear la notificación', error)
+    return
+  }
+  await sendEmailNotice(userId, subject, message)
+}
+
+async function notifyUsers(notices) {
+  await Promise.all((notices || []).map(notice => notifyUser(notice.user_id, notice.message, notice.subject)))
+}
+
 function askQuantity(max) {
   return new Promise(resolve => {
     let root = document.getElementById('messageRoot')
@@ -636,6 +662,7 @@ function profileView() {
         <div class="form-grid">
           ${fieldHtml(preferenceFields)}
           <div class="field"><label>2FA habilitado</label><select id="profile_two_factor_enabled" class="select"><option value="false" ${!p.two_factor_enabled?'selected':''}>NO</option><option value="true" ${p.two_factor_enabled?'selected':''}>SÍ</option></select></div>
+          <div class="field"><label>Avisos por email</label><select id="profile_email_notifications" class="select"><option value="true" ${p.email_notifications !== false?'selected':''}>SÍ</option><option value="false" ${p.email_notifications === false?'selected':''}>NO</option></select></div>
           <div class="field"><label>Estado verificación</label><input disabled class="input" value="${p.verification_status || 'not_verified'}"></div>
         </div>
       </section>
@@ -986,7 +1013,10 @@ window.appActions = {
     }).select().single()
     if (error) { await showMessage(error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
     await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
-    await supabase.from('notifications').insert([{user_id:l.seller_id,message:'Tenés una nueva venta pendiente.'},{user_id:state.user.id,message:'Compra iniciada. Revisá tus operaciones para avanzar.'}])
+    await notifyUsers([
+      { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente' },
+      { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada' }
+    ])
     await showMessage('Vas a ver la operación en Mis operaciones para continuar el proceso.', { title: 'Compra iniciada', tone: 'success' })
     await loadAll(); state.view='my'; render()
   },
@@ -999,7 +1029,10 @@ window.appActions = {
       listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:1,total:0,status:'exchange_pending'
     })
     if (error) await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
-    else { await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; render() }
+    else {
+      await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio')
+      await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; render()
+    }
   },
   async saveProfile(){
     const fields = ['first_name','last_name','birth_date','nationality','document_type','document_number','document_country','sex','phone','country','state','city','address','timezone','preferred_language','preferred_currency']
@@ -1008,6 +1041,7 @@ window.appActions = {
     const payload = { id:state.user.id, email:state.user.email }
     editableFields.forEach(k => payload[k] = document.getElementById(`profile_${k}`).value)
     payload.two_factor_enabled = document.getElementById('profile_two_factor_enabled').value === 'true'
+    payload.email_notifications = document.getElementById('profile_email_notifications').value === 'true'
     const { error } = await supabase.from('users').upsert(payload)
     if (error) await showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
     else { await showMessage('Tus datos fueron actualizados.', { title: 'Perfil actualizado', tone: 'success' }); await ensureProfile(); render() }
@@ -1338,12 +1372,13 @@ window.appActions = {
     const { error } = await supabase.from('users').update(payload).eq('id', userId)
     if (error) return showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
     if (payload.verification_status !== currentUser.verification_status && ['verified','rejected'].includes(payload.verification_status)) {
-      await supabase.from('notifications').insert({
-        user_id:userId,
-        message: payload.verification_status === 'verified'
+      await notifyUser(
+        userId,
+        payload.verification_status === 'verified'
           ? 'Tu verificación fue aprobada. Ya podés comprar, vender e intercambiar entradas.'
-          : 'Tu verificación fue rechazada. Podés volver a cargar la documentación desde Mi perfil.'
-      })
+          : 'Tu verificación fue rechazada. Podés volver a cargar la documentación desde Mi perfil.',
+        payload.verification_status === 'verified' ? 'Verificación aprobada' : 'Verificación rechazada'
+      )
     }
     await loadAll()
     this.closeVerificationModal()
@@ -1369,7 +1404,7 @@ window.appActions = {
     const message = status === 'verified'
       ? 'Tu verificación fue aprobada. Ya podés comprar, vender e intercambiar entradas.'
       : `Tu verificación fue rechazada.${reason ? ` Motivo: ${reason}` : ' Podés volver a cargar la documentación desde Mi perfil.'}`
-    await supabase.from('notifications').insert({ user_id:userId, message })
+    await notifyUser(userId, message, status === 'verified' ? 'Verificación aprobada' : 'Verificación rechazada')
     await loadAll()
     this.closeVerificationModal()
     await showMessage(status === 'verified' ? 'Usuario verificado.' : 'Verificación rechazada.', { title: 'Estado actualizado', tone: 'success' })
