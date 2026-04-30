@@ -18,6 +18,7 @@ let state = {
   notifications: [],
   theme: localStorage.getItem('theme') || 'light',
   authMode: 'login',
+  notificationsOpen: false,
   prefMatchId: '',
   selectedMatch: null,
   selectedMatchId: null,
@@ -243,18 +244,38 @@ function hideLoading() {
 async function sendEmailNotice(userId, subject, message, actionUrl = window.location.origin) {
   if (!userId || !subject || !message) return
   try {
-    const { error } = await supabase.functions.invoke('send-email', {
-      body: { user_id: userId, subject, message, action_url: actionUrl }
+    const { data: { session } } = await supabase.auth.getSession()
+    const response = await fetch('/api/send-email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+      },
+      body: JSON.stringify({ user_id: userId, subject, message, action_url: actionUrl })
     })
-    if (error) console.warn('No se pudo enviar email', error)
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}))
+      console.warn('No se pudo enviar email', detail)
+    }
   } catch (error) {
     console.warn('No se pudo enviar email', error)
   }
 }
 
-async function notifyUser(userId, message, subject = 'Nuevo aviso en Digital Guale') {
+async function notifyUser(userId, message, subject = 'Nuevo aviso en Digital Guale', action = {}) {
   if (!userId || !message) return
-  const { error } = await supabase.from('notifications').insert({ user_id:userId, message })
+  const payload = {
+    user_id: userId,
+    message,
+    subject,
+    action_view: action.view || null,
+    action_id: action.id ? String(action.id) : null
+  }
+  let { error } = await supabase.from('notifications').insert(payload)
+  if (error && (error.message?.includes('action_view') || error.message?.includes('subject'))) {
+    const retry = await supabase.from('notifications').insert({ user_id:userId, message })
+    error = retry.error
+  }
   if (error) {
     console.warn('No se pudo crear la notificación', error)
     return
@@ -263,7 +284,7 @@ async function notifyUser(userId, message, subject = 'Nuevo aviso en Digital Gua
 }
 
 async function notifyUsers(notices) {
-  await Promise.all((notices || []).map(notice => notifyUser(notice.user_id, notice.message, notice.subject)))
+  await Promise.all((notices || []).map(notice => notifyUser(notice.user_id, notice.message, notice.subject, notice.action)))
 }
 
 function askQuantity(max) {
@@ -396,9 +417,33 @@ function nav() {
         <button class="${state.view==='profile'?'active':''}" onclick="window.appActions.requireLogin('profile')">Mi perfil</button>
         ${isAdmin()?`<button class="${state.view==='admin'?'active':''}" onclick="window.appActions.setView('admin')">Admin</button>`:''}
         <button class="pill-btn ghost" onclick="window.appActions.toggleTheme()">${state.theme==='dark'?'☀️ Claro':'🌙 Oscuro'}</button>
-        ${state.user?`<button class="pill-btn ghost" onclick="window.appActions.setView('notifications')">🔔 ${unread}</button><button class="pill-btn ghost" onclick="window.appActions.logout()">Salir</button>`:`<button class="pill-btn primary" onclick="window.appActions.setView('auth')">Ingresar</button>`}
+        ${state.user?`<button class="pill-btn ghost notification-trigger" onclick="window.appActions.toggleNotifications()">🔔 ${unread}</button><button class="pill-btn ghost" onclick="window.appActions.logout()">Salir</button>`:`<button class="pill-btn primary" onclick="window.appActions.setView('auth')">Ingresar</button>`}
       </div>
     </div>
+    ${state.user && state.notificationsOpen ? notificationsMini() : ''}
+  </div>`
+}
+
+function notificationsMini() {
+  const items = state.notifications.slice(0, 8)
+  return `<div class="notifications-popover">
+    <div class="notifications-head">
+      <strong>Notificaciones</strong>
+      <button class="link-btn" onclick="window.appActions.markAllNotificationsRead()">Marcar todas vistas</button>
+    </div>
+    <div class="notifications-list">
+      ${items.length ? items.map(n=>`
+        <div class="notification-item ${n.read ? '' : 'unread'}" onclick="window.appActions.openNotification('${n.id}')">
+          <div>
+            <strong>${escapeHtml(n.subject || 'Aviso')}</strong>
+            <p>${escapeHtml(n.message)}</p>
+            <small>${fmtDate(n.created_at)}</small>
+          </div>
+          <button class="secondary-btn" onclick="event.stopPropagation(); window.appActions.markNotificationRead('${n.id}')">Vista</button>
+        </div>
+      `).join('') : '<div class="empty">No tenés notificaciones.</div>'}
+    </div>
+    <button class="pill-btn primary message-action" onclick="window.appActions.setView('notifications')">Ver todas</button>
   </div>`
 }
 
@@ -815,7 +860,16 @@ function adminView() {
 }
 
 function notificationsView() {
-  return `<div class="container"><div class="panel"><h2>Notificaciones</h2><div class="list">${state.notifications.length?state.notifications.map(n=>`<div class="item"><strong>${n.read?'':'🔴 '}${n.message}</strong><p class="meta">${fmtDate(n.created_at)}</p></div>`).join(''):`<div class="empty">No tenés notificaciones.</div>`}</div></div></div>`
+  return `<div class="container"><div class="panel">
+    <div class="section-head"><div><h2>Notificaciones</h2><p class="meta">Tocá una notificación para abrir la operación o la verificación correspondiente.</p></div><button class="secondary-btn" onclick="window.appActions.markAllNotificationsRead()">Marcar todas vistas</button></div>
+    <div class="list">${state.notifications.length?state.notifications.map(n=>`
+      <div class="item notification-row ${n.read ? '' : 'unread'}" onclick="window.appActions.openNotification('${n.id}')">
+        <strong>${n.read?'':'● '}${escapeHtml(n.subject || 'Aviso')}</strong>
+        <p class="meta">${escapeHtml(n.message)}</p>
+        <p class="meta">${fmtDate(n.created_at)}</p>
+        <button class="secondary-btn" onclick="event.stopPropagation(); window.appActions.markNotificationRead('${n.id}')">Marcar vista</button>
+      </div>`).join(''):`<div class="empty">No tenés notificaciones.</div>`}</div>
+  </div></div>`
 }
 
 async function openOrder(id) {
@@ -918,6 +972,47 @@ window.appActions = {
   setView,
   setAuthMode(mode){ state.authMode = mode; render() },
   toggleTheme: setTheme,
+  toggleNotifications(){
+    state.notificationsOpen = !state.notificationsOpen
+    render()
+  },
+  async markNotificationRead(id){
+    await supabase.from('notifications').update({ read:true }).eq('id', id)
+    const notification = state.notifications.find(n => n.id === id)
+    if (notification) notification.read = true
+    render()
+  },
+  async markAllNotificationsRead(){
+    if (!state.user) return
+    await supabase.from('notifications').update({ read:true }).eq('user_id', state.user.id).eq('read', false)
+    state.notifications = state.notifications.map(n => ({ ...n, read:true }))
+    render()
+  },
+  async openNotification(id){
+    const notification = state.notifications.find(n => n.id === id)
+    if (!notification) return
+    await supabase.from('notifications').update({ read:true }).eq('id', id)
+    notification.read = true
+    state.notificationsOpen = false
+    if (notification.action_view === 'order' && notification.action_id) {
+      await loadAll()
+      await openOrder(notification.action_id)
+      render()
+      return
+    }
+    if (notification.action_view === 'profile' || /verificaci/i.test(notification.message || '')) {
+      state.view = 'profile'
+      render()
+      return
+    }
+    if (notification.action_view === 'admin') {
+      state.view = 'admin'
+      render()
+      return
+    }
+    state.view = 'notifications'
+    render()
+  },
   requireLogin(view, matchId='') {
     if (!state.user) { state.view = 'auth'; render(); return }
     state.prefMatchId = matchId
@@ -1122,8 +1217,8 @@ window.appActions = {
     if (error) { await showMessage(error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
     await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
     await notifyUsers([
-      { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente' },
-      { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada' }
+      { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente', action:{ view:'order', id:data.id } },
+      { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada', action:{ view:'order', id:data.id } }
     ])
     await showMessage('Vas a ver la operación en Mis operaciones para continuar el proceso.', { title: 'Compra iniciada', tone: 'success' })
     await loadAll(); state.view='my'; render()
@@ -1133,13 +1228,13 @@ window.appActions = {
     if (!canOperate()) return showMessage('Para intercambiar entradas primero tenés que completar la verificación de identidad y esperar la aprobación.', { title: 'Verificación requerida', tone: 'error' })
     const l = state.listings.find(x=>x.id===listingId)
     if (l.seller_id === state.user.id) return showMessage('No podés ofertar sobre tu propia publicación.', { title: 'Operación no permitida' })
-    const { error } = await supabase.from('orders').insert({
+    const { data, error } = await supabase.from('orders').insert({
       listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:1,total:0,status:'exchange_pending',
       seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', admin_buyer_delivery_status:'pending'
-    })
+    }).select().single()
     if (error) await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
     else {
-      await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio')
+      await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio', { view:'order', id:data.id })
       await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; render()
     }
   },
@@ -1253,10 +1348,10 @@ window.appActions = {
     if (status) payload.status = status
     const { error } = await supabase.from('orders').update(payload).eq('id', id)
     if (error) return showMessage(error.message, { title: 'No se pudo actualizar', tone: 'error' })
-    if (status === 'awaiting_buyer_payment') await notifyUser(order?.buyer_id, 'El admin confirmó que recibió las entradas del vendedor. Ya podés realizar el pago y avisarlo en la operación.', 'Entradas recibidas por admin')
-    if (status === 'buyer_payment_sent') await notifyUser(order?.seller_id, 'El comprador informó que realizó el pago. Revisá tu cuenta y confirmá cuando lo hayas recibido.', 'Pago informado por comprador')
-    if (status === 'payment_confirmed') await notifyUsers([{ user_id:order?.buyer_id, message:'El vendedor confirmó que recibió el pago. El admin liberará las entradas.', subject:'Pago confirmado' }])
-    if (status === 'completed') await notifyUser(order?.buyer_id, 'El admin liberó las entradas para vos. Revisá el detalle de la operación.', 'Entradas liberadas')
+    if (status === 'awaiting_buyer_payment') await notifyUser(order?.buyer_id, 'El admin confirmó que recibió las entradas del vendedor. Ya podés realizar el pago y avisarlo en la operación.', 'Entradas recibidas por admin', { view:'order', id })
+    if (status === 'buyer_payment_sent') await notifyUser(order?.seller_id, 'El comprador informó que realizó el pago. Revisá tu cuenta y confirmá cuando lo hayas recibido.', 'Pago informado por comprador', { view:'order', id })
+    if (status === 'payment_confirmed') await notifyUsers([{ user_id:order?.buyer_id, message:'El vendedor confirmó que recibió el pago. El admin liberará las entradas.', subject:'Pago confirmado', action:{ view:'order', id } }])
+    if (status === 'completed') await notifyUser(order?.buyer_id, 'El admin liberó las entradas para vos. Revisá el detalle de la operación.', 'Entradas liberadas', { view:'order', id })
     await loadAll()
     await openOrder(id)
     render()
@@ -1272,8 +1367,8 @@ window.appActions = {
     }).eq('id', id)
     if (error) return showMessage(error.message, { title: 'No se pudo completar', tone: 'error' })
     await notifyUsers([
-      { user_id:order?.seller_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado' },
-      { user_id:order?.buyer_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado' }
+      { user_id:order?.seller_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado', action:{ view:'order', id } },
+      { user_id:order?.buyer_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado', action:{ view:'order', id } }
     ])
     await loadAll()
     await openOrder(id)
@@ -1520,7 +1615,8 @@ window.appActions = {
         payload.verification_status === 'verified'
           ? 'Tu verificación fue aprobada. Ya podés comprar, vender e intercambiar entradas.'
           : 'Tu verificación fue rechazada. Podés volver a cargar la documentación desde Mi perfil.',
-        payload.verification_status === 'verified' ? 'Verificación aprobada' : 'Verificación rechazada'
+        payload.verification_status === 'verified' ? 'Verificación aprobada' : 'Verificación rechazada',
+        { view:'profile' }
       )
     }
     await loadAll()
@@ -1547,7 +1643,7 @@ window.appActions = {
     const message = status === 'verified'
       ? 'Tu verificación fue aprobada. Ya podés comprar, vender e intercambiar entradas.'
       : `Tu verificación fue rechazada.${reason ? ` Motivo: ${reason}` : ' Podés volver a cargar la documentación desde Mi perfil.'}`
-    await notifyUser(userId, message, status === 'verified' ? 'Verificación aprobada' : 'Verificación rechazada')
+    await notifyUser(userId, message, status === 'verified' ? 'Verificación aprobada' : 'Verificación rechazada', { view:'profile' })
     await loadAll()
     this.closeVerificationModal()
     await showMessage(status === 'verified' ? 'Usuario verificado.' : 'Verificación rechazada.', { title: 'Estado actualizado', tone: 'success' })

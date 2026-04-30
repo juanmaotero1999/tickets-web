@@ -102,7 +102,10 @@ create table if not exists messages (
 create table if not exists notifications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid,
+  subject text,
   message text,
+  action_view text,
+  action_id text,
   read boolean default false,
   created_at timestamp default now()
 );
@@ -200,7 +203,10 @@ alter table messages add column if not exists text text;
 alter table messages add column if not exists created_at timestamp default now();
 
 alter table notifications add column if not exists user_id uuid;
+alter table notifications add column if not exists subject text;
 alter table notifications add column if not exists message text;
+alter table notifications add column if not exists action_view text;
+alter table notifications add column if not exists action_id text;
 alter table notifications add column if not exists read boolean default false;
 alter table notifications add column if not exists created_at timestamp default now();
 

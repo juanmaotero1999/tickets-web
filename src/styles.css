@@ -149,6 +149,15 @@ body.dark .document-warning{background:rgba(245,165,36,.12);border-color:rgba(24
 .social-login{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:4px}
 .oauth-btn{padding:12px;border-radius:14px;background:var(--card);border:1px solid var(--line);color:var(--text);font-weight:900}
 .link-btn{background:transparent;color:var(--accent-2);font-weight:900;padding:8px 0;text-align:center}
+.notifications-popover{position:absolute;right:24px;top:78px;width:min(440px,calc(100vw - 36px));background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);padding:14px;z-index:70}
+.notifications-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.notifications-list{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto;margin-bottom:10px}
+.notification-item,.notification-row{border:1px solid var(--line);border-radius:16px;background:var(--bg);padding:12px;cursor:pointer}
+.notification-item{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
+.notification-item.unread,.notification-row.unread{border-color:#59d9ff;box-shadow:0 0 0 3px rgba(89,217,255,.13)}
+.notification-item p,.notification-row p{margin:4px 0;color:var(--muted);font-weight:750;line-height:1.35}
+.notification-item small{color:var(--muted);font-weight:800}
+.notification-row .secondary-btn{margin-top:10px}
 .form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
 .field label{display:block;font-weight:850;margin:0 0 7px;color:var(--text)}
 .field small{display:block;color:var(--muted);margin-top:5px}
@@ -265,4 +274,5 @@ body.dark .operation-disclaimer{background:rgba(89,217,255,.1);border-color:rgba
   .verification-disclaimer{margin-left:18px;margin-right:18px}
   .admin-title,.operation-head{flex-direction:column;align-items:stretch}
   .flow-grid{grid-template-columns:1fr}
+  .notifications-popover{right:18px;top:96px}
 }
