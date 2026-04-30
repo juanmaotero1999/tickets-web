@@ -5,6 +5,7 @@ import './styles.css'
 const app = document.getElementById('app')
 let activeCameraStream = null
 let operationRefreshTimer = null
+let loadingTimer = null
 
 let state = {
   session: null,
@@ -349,6 +350,7 @@ function showMessage(message, { title = 'Aviso', tone = 'info' } = {}) {
 }
 
 function showLoading(message = 'Cargando...') {
+  if (loadingTimer) clearTimeout(loadingTimer)
   let root = document.getElementById('loadingRoot')
   if (!root) {
     root = document.createElement('div')
@@ -362,9 +364,18 @@ function showLoading(message = 'Cargando...') {
         <strong>${escapeHtml(message)}</strong>
       </div>
     </div>`
+  loadingTimer = setTimeout(() => {
+    const current = document.getElementById('loadingRoot')
+    if (!current) return
+    current.remove()
+    loadingTimer = null
+    showMessage('La acción tardó más de lo esperado. Ya liberé la pantalla; si no ves el cambio, volvé a intentar o refrescá la página.', { title:'Tiempo de espera agotado', tone:'error' })
+  }, 25000)
 }
 
 function hideLoading() {
+  if (loadingTimer) clearTimeout(loadingTimer)
+  loadingTimer = null
   document.getElementById('loadingRoot')?.remove()
 }
 
@@ -587,8 +598,13 @@ async function setView(v, options = {}) {
   if (options.route !== false) updateRoute(v, Boolean(options.replace))
   if (!supabaseConfigMissing) {
     showLoading('Actualizando información...')
-    await loadAll()
-    hideLoading()
+    try {
+      await loadAll()
+    } catch (error) {
+      await showMessage(error.message || 'No se pudo actualizar la información.', { title:'Error de actualización', tone:'error' })
+    } finally {
+      hideLoading()
+    }
   }
   render()
 }
@@ -775,7 +791,7 @@ function authView() {
         <div class="field"><label>Contraseña</label><input id="loginPass" type="password" class="input"></div>
         <div class="auth-actions"><button class="pill-btn primary" onclick="window.appActions.login()">Ingresar</button></div>
         <div class="social-login">
-          <button class="oauth-btn google-btn" onclick="window.appActions.oauthLogin('google')"><span class="google-icon">G</span> Iniciar sesión con Google</button>
+          <button class="oauth-btn google-btn" onclick="window.appActions.oauthLogin('google')"><img class="google-icon" src="/google-login-icon.avif" alt=""> <span>Iniciar sesión con Google</span></button>
         </div>
         <button class="link-btn" onclick="window.appActions.setAuthMode('reset')">Olvidé mi contraseña</button>
         <button class="link-btn" onclick="window.appActions.setAuthMode('register')">No tengo cuenta, registrarme</button>
@@ -988,7 +1004,7 @@ function profileView() {
       </section>
       <section class="profile-module">
         <h2>Verificación</h2>
-        <p class="meta">Subí tu foto de perfil, el frente de tu documento y completá un reconocimiento facial con cámara. Un administrador revisará que nombre, foto y número de documento coincidan.</p>
+        <p class="meta">Subí tu foto de perfil, el frente y dorso de tu documento, y completá un reconocimiento facial con cámara. Un administrador revisará que nombre, foto y número de documento coincidan.</p>
         <div class="form-grid">${fieldHtml(documentFields, true)}</div>
         <div class="document-warning">
           El documento debe verse nítido y con buena luz. Podés tapar datos sensibles que no necesitamos, como número de trámite, códigos secundarios o domicilio. Deben quedar visibles foto, nombres y número de DNI/documento.
@@ -998,12 +1014,16 @@ function profileView() {
             <strong>1. Foto de perfil</strong>
             <span>${locked ? uploadLockCopy : (p.avatar_url ? 'Foto cargada' : 'Buena luz, rostro visible, JPG/PNG/WebP hasta 8 MB.')}</span>
           </button>
-          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('document')" ${locked ? 'disabled' : ''}>
-            <strong>2. Documento</strong>
-            <span>${locked ? uploadLockCopy : (p.identity_document_path ? `Documento recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB')}</span>
+          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('documentFront')" ${locked ? 'disabled' : ''}>
+            <strong>2. Documento frente</strong>
+            <span>${locked ? uploadLockCopy : (p.identity_document_path ? `Frente recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB')}</span>
+          </button>
+          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('documentBack')" ${locked ? 'disabled' : ''}>
+            <strong>3. Documento dorso</strong>
+            <span>${locked ? uploadLockCopy : (p.identity_document_back_path ? `Dorso recibido · ${p.identity_document_back_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB')}</span>
           </button>
           <button class="upload-card camera-card" type="button" onclick="window.appActions.startLivenessCheck()" ${locked ? 'disabled' : ''}>
-            <strong>3. Reconocimiento facial</strong>
+            <strong>4. Reconocimiento facial</strong>
             <span>${locked ? uploadLockCopy : (p.liveness_side_path && p.liveness_front_path ? `2 tomas recibidas · ${p.liveness_status || 'submitted'}` : 'Captura automática: perfil y frente.')}</span>
           </button>
         </div>
@@ -1093,7 +1113,7 @@ function operationFlowCard(o) {
 function adminView() {
   if (!isAdmin()) return `<div class="container"><div class="empty">No tenés permisos de admin.</div></div>`
   const pending = state.orders.filter(o=>!['completed','cancelled'].includes(o.status)).length
-  const verificationQueue = state.users.filter(u => u.verification_status === 'pending_review' && u.identity_document_path && u.liveness_side_path && u.liveness_front_path)
+  const verificationQueue = state.users.filter(u => u.verification_status === 'pending_review' && u.identity_document_path && (u.identity_document_back_path || u.identity_document_back_status === 'legacy_not_required') && u.liveness_side_path && u.liveness_front_path)
   const sales = state.orders.filter(o => {
     const l = state.listings.find(x=>x.id===o.listing_id)
     return l?.type !== 'exchange' && !String(o.status || '').startsWith('exchange')
@@ -1230,6 +1250,7 @@ function startOperationAutoRefresh() {
     if (!modal?.querySelector('.operation-modal')) return
     const chatInput = document.getElementById('chatText')
     if (document.activeElement === chatInput) return
+    if (['reviewComment', 'reviewRating'].includes(document.activeElement?.id)) return
     const previousOrderMessages = state.messages.filter(msg => msg.order_id === state.selectedOrder.id)
     const previousLatest = latestMessageValue(previousOrderMessages)
     const [orderResult, messagesResult] = await Promise.all([
@@ -1332,6 +1353,8 @@ function renderModal(options = {}) {
   if (!o) return
   const previousModal = document.querySelector('#modalRoot .operation-modal')
   const previousChat = document.querySelector('#modalRoot .chat-box')
+  const previousReviewComment = document.getElementById('reviewComment')?.value || ''
+  const previousReviewRating = document.getElementById('reviewRating')?.value || ''
   const scrollState = options.preserveScroll || options.preserveModalScroll ? {
     modalTop: previousModal?.scrollTop || 0,
     chatTop: options.preserveScroll ? (previousChat?.scrollTop || 0) : null
@@ -1427,6 +1450,14 @@ function renderModal(options = {}) {
       if (nextModal) nextModal.scrollTop = scrollState.modalTop
       if (nextChat && scrollState.chatTop !== null) nextChat.scrollTop = scrollState.chatTop
       if (nextChat && options.autoChatBottom) nextChat.scrollTop = nextChat.scrollHeight
+      if (previousReviewComment) {
+        const reviewComment = document.getElementById('reviewComment')
+        if (reviewComment) reviewComment.value = previousReviewComment
+      }
+      if (previousReviewRating) {
+        const reviewRating = document.getElementById('reviewRating')
+        if (reviewRating) reviewRating.value = previousReviewRating
+      }
     })
   } else if (options.autoChatBottom) {
     requestAnimationFrame(() => {
@@ -1457,8 +1488,13 @@ window.appActions = {
     state.adminSection = section
     state.adminMenuOpen = true
     showLoading('Actualizando módulo...')
-    await loadAll()
-    hideLoading()
+    try {
+      await loadAll()
+    } catch (error) {
+      await showMessage(error.message || 'No se pudo actualizar el módulo.', { title:'Error de actualización', tone:'error' })
+    } finally {
+      hideLoading()
+    }
     render()
   },
   toggleAdminMenu(){
@@ -1581,36 +1617,42 @@ window.appActions = {
     const email = document.getElementById('loginEmail').value.trim()
     const password = document.getElementById('loginPass').value
     showLoading('Iniciando sesión...')
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    hideLoading()
+    const { error } = await supabase.auth.signInWithPassword({ email, password }).finally(() => hideLoading())
     if (error) await showMessage(error.message, { title: 'No se pudo ingresar', tone: 'error' })
     else {
       showLoading('Preparando tu cuenta...')
-      state.view='home'
-      updateRoute('home', true)
-      await init({ respectPath:false })
-      hideLoading()
+      try {
+        state.view='home'
+        updateRoute('home', true)
+        await init({ respectPath:false })
+      } finally {
+        hideLoading()
+      }
     }
   },
   async resetPassword(){
     const identifier = document.getElementById('resetIdentifier')?.value.trim()
     if (!identifier) return showMessage('Ingresá tu email o número de documento.', { title: 'Falta un dato', tone: 'error' })
     showLoading('Preparando recuperación...')
-    let email = identifier
-    if (!identifier.includes('@')) {
-      const { data } = await supabase.from('users').select('email').eq('document_number', identifier).maybeSingle()
-      email = data?.email || ''
-    }
-    if (!email) {
+    try {
+      let email = identifier
+      if (!identifier.includes('@')) {
+        const { data } = await supabase.from('users').select('email').eq('document_number', identifier).maybeSingle()
+        email = data?.email || ''
+      }
+      if (!email) {
+        hideLoading()
+        return showMessage('No encontramos una cuenta con ese documento. Probá ingresando tu email.', { title: 'Cuenta no encontrada', tone: 'error' })
+      }
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/ingresar` })
       hideLoading()
-      return showMessage('No encontramos una cuenta con ese documento. Probá ingresando tu email.', { title: 'Cuenta no encontrada', tone: 'error' })
+      if (error) return showMessage(error.message, { title: 'No se pudo enviar el email', tone: 'error' })
+      await showMessage('Te enviamos un email con el enlace para renovar la contraseña.', { title: 'Revisá tu correo', tone: 'success' })
+      state.authMode = 'login'
+      render()
+    } finally {
+      hideLoading()
     }
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/ingresar` })
-    hideLoading()
-    if (error) return showMessage(error.message, { title: 'No se pudo enviar el email', tone: 'error' })
-    await showMessage('Te enviamos un email con el enlace para renovar la contraseña.', { title: 'Revisá tu correo', tone: 'success' })
-    state.authMode = 'login'
-    render()
   },
   async register(){
     const email = document.getElementById('regEmail').value.trim()
@@ -1792,26 +1834,37 @@ window.appActions = {
     if (!qty) return
     if (qty > Number(l.quantity)) return showMessage('No hay suficientes entradas disponibles.', { title: 'Cantidad no disponible', tone: 'error' })
     showLoading('Reservando entradas...')
-    const { data, error } = await insertOrderWithFallback({
-      listing_id: l.id, buyer_id: state.user.id, seller_id: l.seller_id, quantity: qty, total: qty * Number(l.price || 0), status:'pending_payment',
-      seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', buyer_payment_status:'pending', seller_payment_status:'pending'
-    })
-    if (error) { hideLoading(); await showMessage(error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
-    await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
-    await addSystemMessage(data.id, `Recordatorio de seguridad: no transfieras dinero hasta que el administrador confirme en esta operación que recibió las entradas. El vendedor debe enviar las entradas a ${PLATFORM_TRANSFER_EMAIL}.`)
-    await notifyUsers([
-      { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente', action:{ view:'order', id:data.id, template:'venta_pendiente', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } },
-      { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada', action:{ view:'order', id:data.id, template:'compra_iniciada', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } }
-    ])
-    hideLoading()
+    let data
+    try {
+      const result = await insertOrderWithFallback({
+        listing_id: l.id, buyer_id: state.user.id, seller_id: l.seller_id, quantity: qty, total: qty * Number(l.price || 0), status:'pending_payment',
+        seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', buyer_payment_status:'pending', seller_payment_status:'pending'
+      })
+      if (result.error) { await showMessage(result.error.message, { title: 'No se pudo iniciar la compra', tone: 'error' }); return }
+      data = result.data
+      await supabase.from('listings').update({ quantity: Number(l.quantity)-qty, status: Number(l.quantity)-qty <= 0 ? 'sold' : 'active' }).eq('id', l.id)
+      await addSystemMessage(data.id, `Recordatorio de seguridad: no transfieras dinero hasta que el administrador confirme en esta operación que recibió las entradas. El vendedor debe enviar las entradas a ${PLATFORM_TRANSFER_EMAIL}.`)
+      await notifyUsers([
+        { user_id:l.seller_id, message:'Tenés una nueva venta pendiente.', subject:'Nueva venta pendiente', action:{ view:'order', id:data.id, template:'venta_pendiente', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } },
+        { user_id:state.user.id, message:'Compra iniciada. Revisá tus operaciones para avanzar.', subject:'Compra iniciada', action:{ view:'order', id:data.id, template:'compra_iniciada', vars:{ partido:listingTicketSummary(l), precio:money(data.total || 0, l.currency), sector:l.sector || '', asientos:l.seats || '', cantidad:qty, categoria:l.category, comprador:userName(state.user.id), vendedor:userName(l.seller_id) } } }
+      ])
+    } catch (error) {
+      await showMessage(error.message || 'No se pudo iniciar la compra.', { title: 'No se pudo iniciar la compra', tone: 'error' })
+      return
+    } finally {
+      hideLoading()
+    }
     await showMessage(siteSetting('buyer_disclaimer', 'Seguí los pasos del proceso seguro dentro del detalle de la operación. Usá el chat para coordinar y no hagas pagos ni entregas por fuera de la plataforma.'), { title: 'Compra iniciada', tone: 'success' })
     showLoading('Abriendo detalle de la compra...')
-    await loadAll()
-    state.view='my'
-    updateRoute('my')
-    render()
-    await openOrder(data.id)
-    hideLoading()
+    try {
+      await loadAll()
+      state.view='my'
+      updateRoute('my')
+      render()
+      await openOrder(data.id)
+    } finally {
+      hideLoading()
+    }
   },
   async startExchange(listingId){
     if (!state.user) { state.view='auth'; render(); return }
@@ -1825,16 +1878,20 @@ window.appActions = {
     const accepted = await showMessage(`Vas a ofrecer un intercambio 1 a 1 por ${qty} entrada${qty === 1 ? '' : 's'}. Ambas partes deberán enviar sus entradas a ${PLATFORM_TRANSFER_EMAIL}; el administrador libera el intercambio cuando verifique ambos lotes.`, { title: 'Confirmar intercambio', tone: 'info' })
     if (!accepted) return
     showLoading('Creando oferta de intercambio...')
-    const { data, error } = await insertOrderWithFallback({
-      listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:qty,total:0,status:'exchange_pending',
-      seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', admin_buyer_delivery_status:'pending'
-    })
-    hideLoading()
-    if (error) await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
-    else {
+    try {
+      const { data, error } = await insertOrderWithFallback({
+        listing_id:l.id,buyer_id:state.user.id,seller_id:l.seller_id,quantity:qty,total:0,status:'exchange_pending',
+        seller_delivery_status:'pending', buyer_delivery_status:'pending', admin_seller_delivery_status:'pending', admin_buyer_delivery_status:'pending'
+      })
+      if (error) {
+        await showMessage(error.message, { title: 'No se pudo enviar la oferta', tone: 'error' })
+        return
+      }
       await addSystemMessage(data.id, `Recordatorio de seguridad: ambas partes deben enviar sus entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador verificará ambos lotes antes de liberar el intercambio.`)
       await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio', { view:'order', id:data.id, template:'intercambio_oferta', vars:{ partido:listingTicketSummary(l), comprador:userName(state.user.id), vendedor:userName(l.seller_id) } })
       await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; updateRoute('my'); render()
+    } finally {
+      hideLoading()
     }
   },
   async saveProfile(){
@@ -1854,6 +1911,9 @@ window.appActions = {
       return showMessage('Tu cuenta ya está verificada. Para proteger tu identidad, la foto de perfil, documento y reconocimiento facial quedan bloqueados.', { title: 'Cuenta verificada', tone: 'info' })
     }
     const isAvatar = kind === 'avatar'
+    const isBack = kind === 'documentBack'
+    const isDocument = kind === 'documentFront' || kind === 'documentBack' || kind === 'document'
+    const title = isAvatar ? 'Subir foto de perfil' : isBack ? 'Subir dorso del documento' : 'Subir frente del documento'
     let modal = document.getElementById('modalRoot')
     if (!modal) {
       modal = document.createElement('div')
@@ -1863,11 +1923,12 @@ window.appActions = {
     modal.innerHTML = `
       <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
         <div class="modal upload-modal">
-          <div class="modal-header"><h2>${isAvatar ? 'Subir foto de perfil' : 'Subir documento'}</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+          <div class="modal-header"><h2>${title}</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
           <div class="modal-body">
             <div class="upload-disclaimer">
               <strong>${isAvatar ? 'Indicaciones para una foto confiable' : 'Protegé tus datos antes de subir'}</strong>
-              <p>${isAvatar ? 'Usá una imagen clara, reciente, con buena luz y el rostro visible. Formatos permitidos: JPG, PNG o WebP. Tamaño máximo: 8 MB.' : 'El documento debe verse nítido, sin reflejos y con foto, nombres y número de DNI/documento visibles. Podés tapar número de trámite, domicilio, códigos secundarios y datos no necesarios. Formatos permitidos: imagen o PDF. Tamaño máximo: 8 MB.'}</p>
+              <p>${isAvatar ? 'Usá una imagen clara, reciente, con buena luz y el rostro visible. Formatos permitidos: JPG, PNG o WebP. Tamaño máximo: 8 MB.' : isBack ? 'Subí el dorso nítido del DNI/documento, sin reflejos y completo dentro del cuadro. Podés tapar códigos o datos secundarios que no sean necesarios. Formatos permitidos: imagen o PDF. Tamaño máximo: 8 MB.' : 'Subí el frente nítido del DNI/documento, con foto, nombres y número visibles. Podés tapar número de trámite, domicilio, códigos secundarios y datos no necesarios. Formatos permitidos: imagen o PDF. Tamaño máximo: 8 MB.'}</p>
+              ${isDocument ? '<p><strong>Importante:</strong> para aprobar la cuenta necesitamos frente, dorso y reconocimiento facial. Si una imagen está borrosa, el administrador puede rechazarla y pedir una nueva carga.</p>' : ''}
             </div>
             <label class="dropzone" ondragover="event.preventDefault()" ondrop="window.appActions.handleUploadDrop('${kind}', event)">
               <input id="uploadInput" type="file" accept="${isAvatar ? 'image/*' : 'image/*,.pdf'}" onchange="window.appActions.uploadProfileFile('${kind}', this.files?.[0])">
@@ -1902,17 +1963,27 @@ window.appActions = {
     if (kind === 'avatar') {
       const { data } = supabase.storage.from(bucket).getPublicUrl(path)
       payload.avatar_url = data.publicUrl
+    } else if (kind === 'documentBack') {
+      payload.identity_document_back_path = path
+      payload.identity_document_back_status = 'pending_review'
+      payload.identity_document_back_uploaded_at = new Date().toISOString()
+      payload.verification_status = state.profile?.identity_document_path && state.profile?.liveness_side_path && state.profile?.liveness_front_path ? 'pending_review' : 'not_verified'
     } else {
       payload.identity_document_path = path
       payload.identity_document_status = 'pending_review'
       payload.identity_document_uploaded_at = new Date().toISOString()
-      payload.verification_status = state.profile?.identity_selfie_path ? 'pending_review' : 'not_verified'
+      payload.verification_status = state.profile?.identity_document_back_path && state.profile?.liveness_side_path && state.profile?.liveness_front_path ? 'pending_review' : 'not_verified'
     }
     const { error:updateError } = await supabase.from('users').upsert(payload)
-    if (updateError) return showMessage(updateError.message, { title: 'No se pudo actualizar el perfil', tone: 'error' })
+    if (updateError) {
+      const needsSql = /identity_document_back|schema cache|column/i.test(updateError.message || '')
+      return showMessage(needsSql ? 'Falta agregar las columnas nuevas del dorso del documento en Supabase. Ejecutá el SQL actualizado y volvé a intentar.' : updateError.message, { title: 'No se pudo actualizar el perfil', tone: 'error' })
+    }
     this.closeVerificationModal()
     await ensureProfile()
-    await showMessage(kind === 'avatar' ? 'Tu foto de perfil fue actualizada.' : (state.profile?.identity_selfie_path ? 'Documento recibido. Tu verificación quedó pendiente de revisión.' : 'Documento recibido. Para enviar la verificación, completá también el reconocimiento facial.'), { title: kind === 'avatar' ? 'Foto actualizada' : 'Documento recibido', tone: 'success' })
+    const hasDocs = state.profile?.identity_document_path && state.profile?.identity_document_back_path
+    const hasFace = state.profile?.liveness_side_path && state.profile?.liveness_front_path
+    await showMessage(kind === 'avatar' ? 'Tu foto de perfil fue actualizada.' : (hasDocs && hasFace ? 'Documento recibido. Tu verificación quedó pendiente de revisión.' : 'Documento recibido. Para enviar la verificación, completá frente, dorso y reconocimiento facial.'), { title: kind === 'avatar' ? 'Foto actualizada' : 'Documento recibido', tone: 'success' })
     render()
   },
   openPaymentProofModal(orderId){
@@ -2073,55 +2144,61 @@ window.appActions = {
     const payload = { [field]: value }
     if (status) payload.status = status
     showLoading('Actualizando operación...')
-    const { error } = await supabase.from('orders').update(payload).eq('id', id)
-    if (error) { hideLoading(); return showMessage(error.message, { title: 'No se pudo actualizar', tone: 'error' }) }
-    if (field === 'seller_delivery_status' && value === 'sent') await addSystemMessage(id, `El vendedor informó que envió las entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador ahora debe verificar recepción y validez.`)
-    if (field === 'buyer_delivery_status' && value === 'sent') await addSystemMessage(id, `El usuario 2 informó que envió sus entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador debe verificar ese lote.`)
-    if (field === 'admin_seller_delivery_status' && value === 'received_by_admin') await addSystemMessage(id, 'El administrador confirmó que recibió las entradas del usuario 1/vendedor.')
-    if (field === 'admin_buyer_delivery_status' && value === 'received_by_admin') await addSystemMessage(id, 'El administrador confirmó que recibió las entradas del usuario 2/comprador.')
-    if (status === 'awaiting_buyer_payment') {
-      await addSystemMessage(id, 'El administrador confirmó las entradas. El comprador ya puede transferir al vendedor usando los datos indicados en esta operación.')
-      await notifyUser(order?.buyer_id, 'El admin confirmó que recibió las entradas del vendedor. Ya podés realizar el pago y subir el comprobante en la operación.', 'Entradas recibidas por admin', { view:'order', id })
+    try {
+      const { error } = await supabase.from('orders').update(payload).eq('id', id)
+      if (error) { await showMessage(error.message, { title: 'No se pudo actualizar', tone: 'error' }); return }
+      if (field === 'seller_delivery_status' && value === 'sent') await addSystemMessage(id, `El vendedor informó que envió las entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador ahora debe verificar recepción y validez.`)
+      if (field === 'buyer_delivery_status' && value === 'sent') await addSystemMessage(id, `El usuario 2 informó que envió sus entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador debe verificar ese lote.`)
+      if (field === 'admin_seller_delivery_status' && value === 'received_by_admin') await addSystemMessage(id, 'El administrador confirmó que recibió las entradas del usuario 1/vendedor.')
+      if (field === 'admin_buyer_delivery_status' && value === 'received_by_admin') await addSystemMessage(id, 'El administrador confirmó que recibió las entradas del usuario 2/comprador.')
+      if (status === 'awaiting_buyer_payment') {
+        await addSystemMessage(id, 'El administrador confirmó las entradas. El comprador ya puede transferir al vendedor usando los datos indicados en esta operación.')
+        await notifyUser(order?.buyer_id, 'El admin confirmó que recibió las entradas del vendedor. Ya podés realizar el pago y subir el comprobante en la operación.', 'Entradas recibidas por admin', { view:'order', id })
+      }
+      if (status === 'payment_confirmed') {
+        await addSystemMessage(id, 'El vendedor confirmó que recibió el pago. El administrador debe liberar las entradas al comprador.')
+        await notifyUsers([{ user_id:order?.buyer_id, message:'El vendedor confirmó que recibió el pago. El admin liberará las entradas.', subject:'Pago confirmado', action:{ view:'order', id } }])
+      }
+      if (status === 'completed') {
+        await addSystemMessage(id, 'Operación completada. El administrador liberó las entradas y ambas partes ya pueden calificarse.')
+        await notifyUser(order?.buyer_id, 'El admin liberó las entradas para vos. Revisá el detalle de la operación.', 'Entradas liberadas', { view:'order', id })
+      }
+      await loadAll()
+      await openOrder(id)
+      render()
+    } finally {
+      hideLoading()
     }
-    if (status === 'payment_confirmed') {
-      await addSystemMessage(id, 'El vendedor confirmó que recibió el pago. El administrador debe liberar las entradas al comprador.')
-      await notifyUsers([{ user_id:order?.buyer_id, message:'El vendedor confirmó que recibió el pago. El admin liberará las entradas.', subject:'Pago confirmado', action:{ view:'order', id } }])
-    }
-    if (status === 'completed') {
-      await addSystemMessage(id, 'Operación completada. El administrador liberó las entradas y ambas partes ya pueden calificarse.')
-      await notifyUser(order?.buyer_id, 'El admin liberó las entradas para vos. Revisá el detalle de la operación.', 'Entradas liberadas', { view:'order', id })
-    }
-    await loadAll()
-    await openOrder(id)
-    hideLoading()
-    render()
   },
   async completeExchange(id){
     const order = state.orders.find(o => o.id === id) || (await supabase.from('orders').select('*').eq('id', id).maybeSingle()).data
     if (!order || order.status === 'completed') return
     showLoading('Liberando intercambio...')
-    const { error } = await supabase.from('orders').update({
-      status:'completed',
-      seller_delivery_status:'released',
-      buyer_delivery_status:'released',
-      admin_seller_delivery_status:'received_by_admin',
-      admin_buyer_delivery_status:'received_by_admin'
-    }).eq('id', id)
-    if (error) { hideLoading(); return showMessage(error.message, { title: 'No se pudo completar', tone: 'error' }) }
-    const listing = state.listings.find(l => l.id === order.listing_id) || (await supabase.from('listings').select('*').eq('id', order.listing_id).maybeSingle()).data
-    if (listing) {
-      const nextQty = Math.max(0, Number(listing.quantity || 0) - Number(order.quantity || 1))
-      await supabase.from('listings').update({ quantity: nextQty, status: nextQty <= 0 ? 'sold' : 'active' }).eq('id', listing.id)
+    try {
+      const { error } = await supabase.from('orders').update({
+        status:'completed',
+        seller_delivery_status:'released',
+        buyer_delivery_status:'released',
+        admin_seller_delivery_status:'received_by_admin',
+        admin_buyer_delivery_status:'received_by_admin'
+      }).eq('id', id)
+      if (error) { await showMessage(error.message, { title: 'No se pudo completar', tone: 'error' }); return }
+      const listing = state.listings.find(l => l.id === order.listing_id) || (await supabase.from('listings').select('*').eq('id', order.listing_id).maybeSingle()).data
+      if (listing) {
+        const nextQty = Math.max(0, Number(listing.quantity || 0) - Number(order.quantity || 1))
+        await supabase.from('listings').update({ quantity: nextQty, status: nextQty <= 0 ? 'sold' : 'active' }).eq('id', listing.id)
+      }
+      await addSystemMessage(id, 'Intercambio completado. El administrador liberó ambos lotes a las partes correspondientes.')
+      await notifyUsers([
+        { user_id:order?.seller_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado', action:{ view:'order', id } },
+        { user_id:order?.buyer_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado', action:{ view:'order', id } }
+      ])
+      await loadAll()
+      await openOrder(id)
+      render()
+    } finally {
+      hideLoading()
     }
-    await addSystemMessage(id, 'Intercambio completado. El administrador liberó ambos lotes a las partes correspondientes.')
-    await notifyUsers([
-      { user_id:order?.seller_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado', action:{ view:'order', id } },
-      { user_id:order?.buyer_id, message:'El intercambio fue completado. El admin liberó las entradas acordadas para vos.', subject:'Intercambio completado', action:{ view:'order', id } }
-    ])
-    await loadAll()
-    await openOrder(id)
-    hideLoading()
-    render()
   },
   async submitReview(orderId, reviewedUserId){
     const rating = Number(document.getElementById('reviewRating')?.value || 5)
@@ -2225,7 +2302,7 @@ window.appActions = {
       if (sideUpload.error) throw sideUpload.error
       const frontUpload = await supabase.storage.from('verification-selfies').upload(frontPath, frontBlob, { contentType:'image/jpeg' })
       if (frontUpload.error) throw frontUpload.error
-      const hasDocument = Boolean(state.profile?.identity_document_path)
+      const hasDocument = Boolean(state.profile?.identity_document_path && state.profile?.identity_document_back_path)
       const { error:updateError } = await supabase.from('users').upsert({
         id: state.user.id,
         email: state.user.email,
@@ -2239,7 +2316,7 @@ window.appActions = {
       if (updateError) throw updateError
       this.closeVerificationModal()
       await ensureProfile()
-      await showMessage(hasDocument ? 'Las dos tomas fueron recibidas. Tu verificación quedó pendiente de revisión.' : 'Las dos tomas fueron recibidas. Para enviar la verificación, subí también tu documento.', { title: 'Reconocimiento facial recibido', tone: 'success' })
+      await showMessage(hasDocument ? 'Las dos tomas fueron recibidas. Tu verificación quedó pendiente de revisión.' : 'Las dos tomas fueron recibidas. Para enviar la verificación, subí también frente y dorso del documento.', { title: 'Reconocimiento facial recibido', tone: 'success' })
       render()
     } catch (error) {
       this.closeVerificationModal()
@@ -2258,6 +2335,7 @@ window.appActions = {
       return data?.signedUrl || ''
     }
     const documentUrl = await signed('identity-documents', u.identity_document_path)
+    const documentBackUrl = await signed('identity-documents', u.identity_document_back_path)
     const sideUrl = await signed('verification-selfies', u.liveness_side_path)
     const frontUrl = await signed('verification-selfies', u.liveness_front_path || u.identity_selfie_path)
     const filePreview = (url, label) => url ? `<div class="review-asset"><strong>${label}</strong>${url.includes('.pdf') ? `<iframe src="${url}"></iframe>` : `<img src="${url}" alt="${label}">`}</div>` : `<div class="review-asset missing"><strong>${label}</strong><span>No cargado</span></div>`
@@ -2282,11 +2360,12 @@ window.appActions = {
             </div>
             <div class="review-grid">
               ${filePreview(u.avatar_url, 'Foto de perfil')}
-              ${filePreview(documentUrl, 'Documento')}
+              ${filePreview(documentUrl, 'Documento frente')}
+              ${filePreview(documentBackUrl, 'Documento dorso')}
               ${filePreview(sideUrl, 'Reconocimiento facial: costado')}
               ${filePreview(frontUrl, 'Reconocimiento facial: frente')}
             </div>
-            <div class="document-warning">Verificá que el documento sea nítido, que nombre y número coincidan con los datos del perfil, y que las dos tomas de vida correspondan a la misma persona.</div>
+            <div class="document-warning">Verificá que frente y dorso del documento sean nítidos, que nombre y número coincidan con los datos del perfil, y que las dos tomas faciales correspondan a la misma persona.</div>
             ${verificationRejectReason(u.id)}
             <div class="footer-actions"><button class="pill-btn danger" onclick="window.appActions.updateUserVerification('${u.id}','rejected')">Rechazar</button><button class="pill-btn primary" onclick="window.appActions.updateUserVerification('${u.id}','verified')">Verificar cuenta</button></div>
           </div>
@@ -2374,13 +2453,20 @@ window.appActions = {
     payload.seller_rating = Number(document.getElementById('admin_seller_rating')?.value || 0)
     if (payload.verification_status === 'verified') {
       payload.identity_document_status = 'approved'
+      payload.identity_document_back_status = 'approved'
       payload.liveness_status = 'approved'
     }
     if (payload.verification_status === 'rejected') {
       payload.identity_document_status = 'rejected'
+      payload.identity_document_back_status = 'rejected'
       payload.liveness_status = 'rejected'
     }
-    const { error } = await supabase.from('users').update(payload).eq('id', userId)
+    let { error } = await supabase.from('users').update(payload).eq('id', userId)
+    if (error && /identity_document_back_status|schema cache|column/i.test(error.message || '')) {
+      delete payload.identity_document_back_status
+      const retry = await supabase.from('users').update(payload).eq('id', userId)
+      error = retry.error
+    }
     if (error) return showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
     if (payload.verification_status !== currentUser.verification_status && ['verified','rejected'].includes(payload.verification_status)) {
       await notifyUser(
@@ -2422,6 +2508,7 @@ window.appActions = {
     const updatePayload = {
       verification_status: status,
       identity_document_status: status === 'verified' ? 'approved' : 'rejected',
+      identity_document_back_status: status === 'verified' ? 'approved' : 'rejected',
       liveness_status: status === 'verified' ? 'approved' : 'rejected'
     }
     if (status === 'rejected') updatePayload.verification_rejection_reason = reason
@@ -2429,6 +2516,11 @@ window.appActions = {
     let { error } = await supabase.from('users').update(updatePayload).eq('id', userId)
     if (error && error.message?.includes('verification_rejection_reason')) {
       delete updatePayload.verification_rejection_reason
+      const retry = await supabase.from('users').update(updatePayload).eq('id', userId)
+      error = retry.error
+    }
+    if (error && /identity_document_back_status|schema cache|column/i.test(error.message || '')) {
+      delete updatePayload.identity_document_back_status
       const retry = await supabase.from('users').update(updatePayload).eq('id', userId)
       error = retry.error
     }

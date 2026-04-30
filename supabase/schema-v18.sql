@@ -30,8 +30,11 @@ create table if not exists users (
   seller_sales_count int default 0,
   avatar_url text,
   identity_document_path text,
+  identity_document_back_path text,
   identity_document_uploaded_at timestamp,
+  identity_document_back_uploaded_at timestamp,
   identity_document_status text default 'not_submitted',
+  identity_document_back_status text default 'not_submitted',
   identity_selfie_path text,
   liveness_side_path text,
   liveness_front_path text,
@@ -169,8 +172,11 @@ alter table users add column if not exists seller_reviews_count int default 0;
 alter table users add column if not exists seller_sales_count int default 0;
 alter table users add column if not exists avatar_url text;
 alter table users add column if not exists identity_document_path text;
+alter table users add column if not exists identity_document_back_path text;
 alter table users add column if not exists identity_document_uploaded_at timestamp;
+alter table users add column if not exists identity_document_back_uploaded_at timestamp;
 alter table users add column if not exists identity_document_status text default 'not_submitted';
+alter table users add column if not exists identity_document_back_status text default 'not_submitted';
 alter table users add column if not exists identity_selfie_path text;
 alter table users add column if not exists liveness_side_path text;
 alter table users add column if not exists liveness_front_path text;
