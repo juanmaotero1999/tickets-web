@@ -99,6 +99,7 @@ const flagImg = (code, className = 'flag-thumb') => {
 }
 
 const isAdmin = () => ADMIN_EMAILS.includes(state.user?.email) || state.profile?.role === 'admin'
+const isVerified = () => state.profile?.verification_status === 'verified'
 
 const sellerProfile = (sellerId) => state.users.find(u => u.id === sellerId) || {}
 const sellerName = (sellerId) => {
@@ -106,7 +107,8 @@ const sellerName = (sellerId) => {
   const name = `${seller.first_name || ''} ${seller.last_name || ''}`.trim()
   return name || 'Vendedor verificado'
 }
-const verifiedBadge = (sellerId) => sellerProfile(sellerId).verification_status === 'verified' ? '<span class="verified-badge">✓</span>' : ''
+const verificationBadgeHtml = (verified) => verified ? '<img class="verified-badge" src="/verified-badge.png" alt="Cuenta verificada" loading="lazy">' : ''
+const verifiedBadge = (sellerId) => verificationBadgeHtml(sellerProfile(sellerId).verification_status === 'verified')
 const sellerReputation = (sellerId) => {
   const seller = sellerProfile(sellerId)
   const sales = Number(seller.seller_sales_count || 0)
@@ -241,7 +243,7 @@ async function loadAll() {
     supabase.from('matches').select('*').order('match_number', { ascending:true }),
     supabase.from('listings').select('*').order('created_at', { ascending:false })
   ])
-  let users = await supabase.from('users').select('id,email,first_name,last_name,birth_date,nationality,phone,country,state,city,document_type,document_number,document_country,avatar_url,verification_status,seller_rating,seller_reviews_count,seller_sales_count,identity_document_path,identity_document_status,identity_selfie_path,liveness_side_path,liveness_front_path,liveness_status')
+  let users = await supabase.from('users').select('*')
   if (users.error) users = await supabase.from('users').select('id,first_name,last_name,verification_status')
   state.matches = m.data || []
   state.listings = l.data || []
@@ -530,40 +532,44 @@ function profileView() {
   const documentFields = [['document_type','Tipo de documento'],['document_number','Número de documento'],['document_country','País emisión documento']]
   const contactFields = [['phone','Teléfono'],['country','País'],['state','Provincia/Estado'],['city','Ciudad'],['address','Dirección']]
   const preferenceFields = [['timezone','Timezone'],['preferred_language','Idioma preferido'],['preferred_currency','Divisa preferida']]
-  const fieldHtml = (fields) => fields.map(([k,label])=>`<div class="field"><label>${label}</label><input class="input" id="profile_${k}" value="${escapeHtml(p[k] || '')}"></div>`).join('')
+  const locked = isVerified()
+  const lockedAttrs = locked ? 'disabled title="Este dato queda bloqueado después de verificar tu identidad."' : ''
+  const fieldHtml = (fields, lockSensitive = false) => fields.map(([k,label])=>`<div class="field"><label>${label}</label><input class="input" id="profile_${k}" value="${escapeHtml(p[k] || '')}" ${lockSensitive ? lockedAttrs : ''}></div>`).join('')
+  const fullName = `${p.first_name || ''} ${p.last_name || ''}`.trim()
+  const uploadLockCopy = 'Cuenta verificada: este paso queda bloqueado para proteger tu identidad.'
   return `<div class="container">
     <div class="profile-header">
       <div class="avatar-frame">${p.avatar_url ? `<img src="${escapeHtml(p.avatar_url)}" alt="Foto de perfil">` : `<span>${escapeHtml((p.first_name || state.user?.email || 'U').slice(0,1).toUpperCase())}</span>`}</div>
       <div>
-        <h1>Mi perfil</h1>
+        <h1>${escapeHtml(fullName || 'Mi perfil')} ${verificationBadgeHtml(locked)}</h1>
         <p class="meta">Completá tus datos y verificá tu identidad para operar con mayor confianza.</p>
-        <span class="badge ${p.verification_status === 'verified' ? 'ok' : 'warn'}">${p.verification_status === 'verified' ? 'Cuenta verificada' : 'Verificación pendiente'}</span>
+        <span class="badge ${p.verification_status === 'verified' ? 'ok' : 'warn'}">${p.verification_status === 'verified' ? `Cuenta verificada ${verificationBadgeHtml(true)}` : 'Verificación pendiente'}</span>
       </div>
     </div>
     <div class="profile-grid">
       <section class="profile-module">
         <h2>Identidad</h2>
-        <div class="form-grid">${fieldHtml(personalFields)}</div>
+        <div class="form-grid">${fieldHtml(personalFields, true)}</div>
       </section>
       <section class="profile-module">
         <h2>Verificación</h2>
         <p class="meta">Subí tu foto de perfil, el frente de tu documento y completá una prueba de vida con cámara. Un administrador revisará que nombre, foto y número de documento coincidan.</p>
-        <div class="form-grid">${fieldHtml(documentFields)}</div>
+        <div class="form-grid">${fieldHtml(documentFields, true)}</div>
         <div class="document-warning">
           El documento debe verse nítido y con buena luz. Podés tapar datos sensibles que no necesitamos, como número de trámite, códigos secundarios o domicilio. Deben quedar visibles foto, nombres y número de DNI/documento.
         </div>
         <div class="verification-steps">
-          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('avatar')">
+          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('avatar')" ${locked ? 'disabled' : ''}>
             <strong>1. Foto de perfil</strong>
-            <span>${p.avatar_url ? 'Foto cargada' : 'Buena luz, rostro visible, JPG/PNG/WebP hasta 8 MB.'}</span>
+            <span>${locked ? uploadLockCopy : (p.avatar_url ? 'Foto cargada' : 'Buena luz, rostro visible, JPG/PNG/WebP hasta 8 MB.')}</span>
           </button>
-          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('document')">
+          <button class="upload-card" type="button" onclick="window.appActions.openUploadModal('document')" ${locked ? 'disabled' : ''}>
             <strong>2. Documento</strong>
-            <span>${p.identity_document_path ? `Documento recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB'}</span>
+            <span>${locked ? uploadLockCopy : (p.identity_document_path ? `Documento recibido · ${p.identity_document_status || 'pending_review'}` : 'Imagen o PDF, máximo 8 MB')}</span>
           </button>
-          <button class="upload-card camera-card" type="button" onclick="window.appActions.startLivenessCheck()">
+          <button class="upload-card camera-card" type="button" onclick="window.appActions.startLivenessCheck()" ${locked ? 'disabled' : ''}>
             <strong>3. Prueba de vida</strong>
-            <span>${p.liveness_side_path && p.liveness_front_path ? `2 tomas recibidas · ${p.liveness_status || 'submitted'}` : 'Captura automática: perfil y frente.'}</span>
+            <span>${locked ? uploadLockCopy : (p.liveness_side_path && p.liveness_front_path ? `2 tomas recibidas · ${p.liveness_status || 'submitted'}` : 'Captura automática: perfil y frente.')}</span>
           </button>
         </div>
       </section>
@@ -607,6 +613,14 @@ function adminView() {
   if (!isAdmin()) return `<div class="container"><div class="empty">No tenés permisos de admin.</div></div>`
   const pending = state.orders.filter(o=>o.status !== 'completed').length
   const verificationQueue = state.users.filter(u => u.verification_status === 'pending_review' && u.identity_document_path && u.liveness_side_path && u.liveness_front_path)
+  const userRows = [...state.users].sort((a,b)=>`${a.first_name || ''} ${a.last_name || ''}`.localeCompare(`${b.first_name || ''} ${b.last_name || ''}`)).map(u=>`
+    <tr>
+      <td>${escapeHtml(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario')} ${verificationBadgeHtml(u.verification_status === 'verified')}<p class="meta">${escapeHtml(u.email || '')}</p></td>
+      <td>${escapeHtml(u.verification_status || 'not_verified')}</td>
+      <td>${Number(u.seller_sales_count || 0)} ventas</td>
+      <td>★ ${u.seller_rating ? Number(u.seller_rating).toFixed(1) : '0.0'} · ${Number(u.seller_reviews_count || 0)} reseñas</td>
+      <td><button class="secondary-btn" onclick="window.appActions.openUserEditor('${u.id}')">Editar</button></td>
+    </tr>`).join('')
   return `<div class="container">
     <h1>Dashboard admin</h1>
     <div class="stats-grid">
@@ -620,12 +634,18 @@ function adminView() {
       <table class="admin-table"><thead><tr><th>Usuario</th><th>Documento</th><th>Estado</th><th>Revisión</th></tr></thead><tbody>
         ${verificationQueue.length ? verificationQueue.map(u=>`
           <tr>
-            <td>${escapeHtml(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario')} ${u.verification_status === 'verified' ? '<span class="verified-badge">✓</span>' : ''}</td>
+            <td>${escapeHtml(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario')} ${verificationBadgeHtml(u.verification_status === 'verified')}</td>
             <td>${escapeHtml(u.document_type || '-')} ${escapeHtml(u.document_number || '')}</td>
             <td>${escapeHtml(u.verification_status || 'not_verified')}</td>
             <td><button class="pill-btn primary" onclick="window.appActions.reviewVerification('${u.id}')">Revisar verificación</button></td>
           </tr>
         `).join('') : `<tr><td colspan="4">No hay verificaciones pendientes.</td></tr>`}
+      </tbody></table>
+    </div>
+    <div class="panel">
+      <h2>Administrador de usuarios</h2>
+      <table class="admin-table"><thead><tr><th>Usuario</th><th>Verificación</th><th>Transacciones</th><th>Reputación</th><th>Acción</th></tr></thead><tbody>
+        ${userRows || `<tr><td colspan="5">No hay usuarios cargados.</td></tr>`}
       </tbody></table>
     </div>
     <div class="panel">
@@ -893,14 +913,19 @@ window.appActions = {
   },
   async saveProfile(){
     const fields = ['first_name','last_name','birth_date','nationality','document_type','document_number','document_country','sex','phone','country','state','city','address','timezone','preferred_language','preferred_currency']
+    const lockedFields = ['first_name','last_name','birth_date','nationality','document_type','document_number','document_country','sex']
+    const editableFields = isVerified() ? fields.filter(k => !lockedFields.includes(k)) : fields
     const payload = { id:state.user.id, email:state.user.email }
-    fields.forEach(k => payload[k] = document.getElementById(`profile_${k}`).value)
+    editableFields.forEach(k => payload[k] = document.getElementById(`profile_${k}`).value)
     payload.two_factor_enabled = document.getElementById('profile_two_factor_enabled').value === 'true'
     const { error } = await supabase.from('users').upsert(payload)
     if (error) await showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
     else { await showMessage('Tus datos fueron actualizados.', { title: 'Perfil actualizado', tone: 'success' }); await ensureProfile(); render() }
   },
   openUploadModal(kind){
+    if (isVerified()) {
+      return showMessage('Tu cuenta ya está verificada. Para proteger tu identidad, la foto de perfil, documento y prueba de vida quedan bloqueados.', { title: 'Cuenta verificada', tone: 'info' })
+    }
     const isAvatar = kind === 'avatar'
     let modal = document.getElementById('modalRoot')
     if (!modal) {
@@ -933,6 +958,9 @@ window.appActions = {
   },
   async uploadProfileFile(kind, file){
     if (!file || !state.user) return
+    if (isVerified()) {
+      return showMessage('Tu cuenta ya está verificada. No se pueden reemplazar estos archivos desde el perfil.', { title: 'Cuenta verificada', tone: 'info' })
+    }
     if (file.size > 8 * 1024 * 1024) {
       return showMessage('El archivo no puede superar los 8 MB.', { title: 'Archivo demasiado grande', tone: 'error' })
     }
@@ -985,6 +1013,9 @@ window.appActions = {
     render()
   },
   async startLivenessCheck(){
+    if (isVerified()) {
+      return showMessage('Tu cuenta ya está verificada. La prueba de vida queda bloqueada para evitar cambios de identidad.', { title: 'Cuenta verificada', tone: 'info' })
+    }
     await showMessage('Vamos a tomar dos fotos automáticamente: primero con la cabeza girada levemente hacia un costado y después mirando al frente. Usá buena luz y mantené el rostro dentro del cuadro.', { title: 'Prueba de vida', tone: 'info' })
     if (!navigator.mediaDevices?.getUserMedia) return showMessage('Tu navegador no permite usar la cámara desde esta página.', { title: 'Cámara no disponible', tone: 'error' })
     let modal = document.getElementById('modalRoot')
@@ -999,9 +1030,15 @@ window.appActions = {
           <div class="modal-header"><h2>Prueba de vida</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
           <div class="modal-body">
             <div class="camera-layout">
-              <video id="livenessVideo" autoplay playsinline muted></video>
-              <div id="livenessInstruction" class="document-warning">Prepará la cámara...</div>
-              <div class="liveness-progress"><span id="livenessStep">Iniciando</span><strong id="livenessCountdown">3</strong></div>
+              <div class="camera-stage">
+                <video id="livenessVideo" autoplay playsinline muted></video>
+                <div id="faceGuide" class="face-guide front" aria-hidden="true"><span></span></div>
+                <div class="camera-overlay">
+                  <span id="livenessStep">Iniciando</span>
+                  <strong id="livenessCountdown">3</strong>
+                  <p id="livenessInstruction">Prepará la cámara...</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1028,10 +1065,12 @@ window.appActions = {
     const instruction = document.getElementById('livenessInstruction')
     const step = document.getElementById('livenessStep')
     const countdown = document.getElementById('livenessCountdown')
+    const guide = document.getElementById('faceGuide')
     const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms))
-    const guidedCapture = async (label, text) => {
+    const guidedCapture = async (label, text, pose) => {
       if (step) step.textContent = label
       if (instruction) instruction.textContent = text
+      if (guide) guide.className = `face-guide ${pose}`
       for (let i = 3; i > 0; i--) {
         if (countdown) countdown.textContent = String(i)
         await wait(1000)
@@ -1042,9 +1081,9 @@ window.appActions = {
       return blob
     }
     try {
-      const sideBlob = await guidedCapture('Toma 1 de 2', 'Girate levemente hacia un costado. La captura se toma automáticamente.')
+      const sideBlob = await guidedCapture('Toma 1 de 2', 'Girate hacia un costado y alineá la cabeza con la silueta.', 'side')
       await wait(600)
-      const frontBlob = await guidedCapture('Toma 2 de 2', 'Ahora mirá al frente, con el rostro centrado y buena luz.')
+      const frontBlob = await guidedCapture('Toma 2 de 2', 'Ahora mirá al frente y mantené el rostro dentro del molde.', 'front')
       const sidePath = `${state.user.id}/side-${Date.now()}.jpg`
       const frontPath = `${state.user.id}/front-${Date.now()}.jpg`
       const sideUpload = await supabase.storage.from('verification-selfies').upload(sidePath, sideBlob, { contentType:'image/jpeg' })
@@ -1135,6 +1174,81 @@ window.appActions = {
           <div class="modal-body"><iframe class="verification-preview" src="${data.signedUrl}"></iframe></div>
         </div>
       </div>`
+  },
+  openUserEditor(userId){
+    if (!isAdmin()) return showMessage('No tenés permisos para administrar usuarios.', { title: 'Acceso restringido', tone: 'error' })
+    const u = state.users.find(user => user.id === userId)
+    if (!u) return
+    const value = (key) => escapeHtml(u[key] ?? '')
+    const selected = (key, option) => String(u[key] ?? '') === option ? 'selected' : ''
+    let modal = document.getElementById('modalRoot')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'modalRoot'
+      document.body.appendChild(modal)
+    }
+    modal.innerHTML = `
+      <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeVerificationModal()">
+        <div class="modal user-admin-modal">
+          <div class="modal-header"><h2>Editar usuario</h2><button class="secondary-btn" onclick="window.appActions.closeVerificationModal()">Cerrar</button></div>
+          <div class="modal-body">
+            <div class="review-summary">
+              <div class="avatar-frame small">${u.avatar_url ? `<img src="${escapeHtml(u.avatar_url)}" alt="Foto de perfil">` : `<span>${escapeHtml((u.first_name || 'U').slice(0,1).toUpperCase())}</span>`}</div>
+              <div>
+                <h3>${escapeHtml(`${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email || 'Usuario')} ${verificationBadgeHtml(u.verification_status === 'verified')}</h3>
+                <p class="meta">${escapeHtml(u.email || '')}</p>
+              </div>
+            </div>
+            <div class="form-grid admin-user-grid">
+              <div class="field"><label>Nombre</label><input id="admin_first_name" class="input" value="${value('first_name')}"></div>
+              <div class="field"><label>Apellido</label><input id="admin_last_name" class="input" value="${value('last_name')}"></div>
+              <div class="field"><label>Email</label><input id="admin_email" class="input" value="${value('email')}"></div>
+              <div class="field"><label>Rol</label><select id="admin_role" class="select"><option value="user" ${selected('role','user')}>Usuario</option><option value="admin" ${selected('role','admin')}>Admin</option></select></div>
+              <div class="field"><label>Tipo documento</label><input id="admin_document_type" class="input" value="${value('document_type')}"></div>
+              <div class="field"><label>Número documento</label><input id="admin_document_number" class="input" value="${value('document_number')}"></div>
+              <div class="field"><label>País documento</label><input id="admin_document_country" class="input" value="${value('document_country')}"></div>
+              <div class="field"><label>Teléfono</label><input id="admin_phone" class="input" value="${value('phone')}"></div>
+              <div class="field"><label>País</label><input id="admin_country" class="input" value="${value('country')}"></div>
+              <div class="field"><label>Provincia/Estado</label><input id="admin_state" class="input" value="${value('state')}"></div>
+              <div class="field"><label>Ciudad</label><input id="admin_city" class="input" value="${value('city')}"></div>
+              <div class="field"><label>Verificación</label><select id="admin_verification_status" class="select">
+                <option value="not_verified" ${selected('verification_status','not_verified')}>No verificado</option>
+                <option value="pending_review" ${selected('verification_status','pending_review')}>Pendiente</option>
+                <option value="verified" ${selected('verification_status','verified')}>Verificado</option>
+                <option value="rejected" ${selected('verification_status','rejected')}>Rechazado</option>
+              </select></div>
+              <div class="field"><label>Transacciones completadas</label><input id="admin_seller_sales_count" class="input" type="number" min="0" value="${Number(u.seller_sales_count || 0)}"></div>
+              <div class="field"><label>Cantidad de reseñas</label><input id="admin_seller_reviews_count" class="input" type="number" min="0" value="${Number(u.seller_reviews_count || 0)}"></div>
+              <div class="field"><label>Rating vendedor</label><input id="admin_seller_rating" class="input" type="number" min="0" max="5" step="0.1" value="${Number(u.seller_rating || 0)}"></div>
+            </div>
+            <div class="document-warning">Los cambios hechos por un administrador impactan inmediatamente en publicaciones, perfil y estado de verificación del usuario.</div>
+            <div class="footer-actions"><button class="pill-btn primary" onclick="window.appActions.saveAdminUser('${u.id}')">Guardar cambios</button></div>
+          </div>
+        </div>
+      </div>`
+  },
+  async saveAdminUser(userId){
+    if (!isAdmin()) return
+    const textFields = ['first_name','last_name','email','role','document_type','document_number','document_country','phone','country','state','city','verification_status']
+    const payload = {}
+    textFields.forEach(k => payload[k] = document.getElementById(`admin_${k}`)?.value || '')
+    payload.seller_sales_count = Number(document.getElementById('admin_seller_sales_count')?.value || 0)
+    payload.seller_reviews_count = Number(document.getElementById('admin_seller_reviews_count')?.value || 0)
+    payload.seller_rating = Number(document.getElementById('admin_seller_rating')?.value || 0)
+    if (payload.verification_status === 'verified') {
+      payload.identity_document_status = 'approved'
+      payload.liveness_status = 'approved'
+    }
+    if (payload.verification_status === 'rejected') {
+      payload.identity_document_status = 'rejected'
+      payload.liveness_status = 'rejected'
+    }
+    const { error } = await supabase.from('users').update(payload).eq('id', userId)
+    if (error) return showMessage(error.message, { title: 'No se pudo guardar', tone: 'error' })
+    await loadAll()
+    this.closeVerificationModal()
+    await showMessage('Los datos del usuario fueron actualizados.', { title: 'Usuario actualizado', tone: 'success' })
+    render()
   },
   async updateUserVerification(userId, status){
     const { error } = await supabase.from('users').update({
