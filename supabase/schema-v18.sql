@@ -260,13 +260,22 @@ alter table site_settings add column if not exists created_at timestamp default 
 
 insert into email_templates (event_key, subject, body, enabled)
 values
-('registro', 'Bienvenido a Entradas FIFA', 'Hola {{nombre}}, tu cuenta fue creada. Verificá tu identidad para operar.', true),
+('registro', 'Bienvenido a Entradas Mundial 2026', 'Hola {{nombre}}, tu cuenta fue creada. Verificá tu identidad para operar.', true),
 ('compra_iniciada', 'Compra iniciada: {{partido}}', 'Compraste {{cantidad}} entrada(s) para {{partido}}. Total: {{precio}}. Sector {{sector}}, asientos {{asientos}}.', true),
 ('venta_pendiente', 'Nueva venta pendiente: {{partido}}', 'Vendiste {{cantidad}} entrada(s) para {{partido}}. Categoría {{categoria}}, sector {{sector}}, asientos {{asientos}}.', true),
 ('intercambio_oferta', 'Nueva oferta de intercambio', 'Recibiste una oferta de intercambio para {{partido}}.', true),
 ('verificacion_aprobada', 'Verificación aprobada', 'Tu cuenta fue verificada. Ya podés comprar, vender e intercambiar.', true),
 ('verificacion_rechazada', 'Verificación rechazada', 'Tu verificación fue rechazada. Motivo: {{motivo}}', true)
 on conflict (event_key) do nothing;
+
+update email_templates
+set
+  subject = replace(replace(subject, 'Digital Guale', 'Entradas Mundial 2026'), 'Entradas FIFA', 'Entradas Mundial 2026'),
+  body = replace(replace(body, 'Digital Guale', 'Entradas Mundial 2026'), 'Entradas FIFA', 'Entradas Mundial 2026')
+where subject ilike '%Digital Guale%'
+   or subject ilike '%Entradas FIFA%'
+   or body ilike '%Digital Guale%'
+   or body ilike '%Entradas FIFA%';
 
 insert into site_settings (key, value)
 values

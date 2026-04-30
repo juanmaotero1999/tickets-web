@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   const smtpPort = Number(process.env.SMTP_PORT || 465)
   const smtpUser = process.env.SMTP_USER || 'transferencias@entradas-fifa.store'
   const smtpPass = process.env.SMTP_PASS
-  const emailFrom = process.env.EMAIL_FROM || `Digital Guale <${smtpUser}>`
+  const emailFrom = process.env.EMAIL_FROM || `Entradas Mundial 2026 <${smtpUser}>`
   const appUrl = process.env.APP_URL || 'https://entradas-fifa.store'
 
   if (!supabaseUrl || !anonKey || !serviceRoleKey || !smtpUser || !smtpPass) {
@@ -76,14 +76,14 @@ export default async function handler(req, res) {
 
   const html = `
     <div style="font-family:Inter,Arial,sans-serif;max-width:620px;margin:0 auto;padding:28px;color:#10151f">
-      <h1 style="margin:0 0 14px;font-size:26px;letter-spacing:-.03em">Digital Guale</h1>
+      <h1 style="margin:0 0 14px;font-size:26px;letter-spacing:-.03em">Entradas Mundial 2026</h1>
       <div style="border:1px solid #d9dee8;border-radius:20px;padding:22px;background:#ffffff">
         <p style="margin:0 0 12px;font-weight:700">${greeting}</p>
         <h2 style="margin:0 0 12px;font-size:22px">${escapeHtml(safeSubject)}</h2>
         <p style="margin:0 0 20px;line-height:1.55;color:#475467">${escapeHtml(safeMessage)}</p>
         <a href="${escapeHtml(actionUrl)}" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:999px;font-weight:800">Abrir plataforma</a>
       </div>
-      <p style="margin:18px 0 0;color:#667085;font-size:12px">Recibiste este aviso porque tenés una cuenta en Digital Guale.</p>
+      <p style="margin:18px 0 0;color:#667085;font-size:12px">Recibiste este aviso porque tenés una cuenta en Entradas Mundial 2026.</p>
     </div>`
 
   await transporter.sendMail({

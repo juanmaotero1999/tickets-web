@@ -28,7 +28,7 @@ Configurar estas variables de entorno en Vercel:
 - `SMTP_PORT=465`
 - `SMTP_USER=transferencias@entradas-fifa.store`
 - `SMTP_PASS` con la contraseña del correo
-- `EMAIL_FROM=Digital Guale <transferencias@entradas-fifa.store>`
+- `EMAIL_FROM=Entradas Mundial 2026 <transferencias@entradas-fifa.store>`
 - `APP_URL=https://entradas-fifa.store`
 
 No guardar la contraseña SMTP en el código. Va solo como variable secreta del deploy.

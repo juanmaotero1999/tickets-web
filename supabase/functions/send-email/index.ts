@@ -30,8 +30,8 @@ Deno.serve(async (req) => {
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   const resendApiKey = Deno.env.get('RESEND_API_KEY')
-  const emailFrom = Deno.env.get('EMAIL_FROM') || 'Digital Guale <avisos@digitalguale.com>'
-  const appUrl = Deno.env.get('APP_URL') || 'https://digitalguale.com'
+  const emailFrom = Deno.env.get('EMAIL_FROM') || 'Entradas Mundial 2026 <transferencias@entradas-fifa.store>'
+  const appUrl = Deno.env.get('APP_URL') || 'https://entradas-fifa.store'
 
   if (!supabaseUrl || !anonKey || !serviceRoleKey || !resendApiKey) {
     return new Response(JSON.stringify({ error: 'Email service is not configured' }), {
@@ -88,14 +88,14 @@ Deno.serve(async (req) => {
 
   const html = `
     <div style="font-family:Inter,Arial,sans-serif;max-width:620px;margin:0 auto;padding:28px;color:#10151f">
-      <h1 style="margin:0 0 14px;font-size:26px;letter-spacing:-.03em">Digital Guale</h1>
+      <h1 style="margin:0 0 14px;font-size:26px;letter-spacing:-.03em">Entradas Mundial 2026</h1>
       <div style="border:1px solid #d9dee8;border-radius:20px;padding:22px;background:#ffffff">
         <p style="margin:0 0 12px;font-weight:700">${greeting}</p>
         <h2 style="margin:0 0 12px;font-size:22px">${escapeHtml(safeSubject)}</h2>
         <p style="margin:0 0 20px;line-height:1.55;color:#475467">${escapeHtml(safeMessage)}</p>
         <a href="${escapeHtml(actionUrl)}" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:999px;font-weight:800">Abrir plataforma</a>
       </div>
-      <p style="margin:18px 0 0;color:#667085;font-size:12px">Recibiste este aviso porque tenés una cuenta en Digital Guale.</p>
+      <p style="margin:18px 0 0;color:#667085;font-size:12px">Recibiste este aviso porque tenés una cuenta en Entradas Mundial 2026.</p>
     </div>`
 
   const resendResponse = await fetch('https://api.resend.com/emails', {

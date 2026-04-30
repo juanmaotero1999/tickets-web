@@ -4,6 +4,7 @@ import './styles.css'
 
 const app = document.getElementById('app')
 let activeCameraStream = null
+let operationRefreshTimer = null
 
 let state = {
   session: null,
@@ -35,6 +36,33 @@ document.body.classList.toggle('dark', state.theme === 'dark')
 
 const ADMIN_EMAILS = ['admin@demo.com', 'juanmaotero1999@gmail.com']
 const PLATFORM_TRANSFER_EMAIL = 'transferencias@entradas-fifa.store'
+const APP_NAME = 'Entradas Mundial 2026'
+const viewRoutes = {
+  home: '/comprar',
+  auth: '/ingresar',
+  sell: '/vender',
+  my: '/operaciones',
+  profile: '/perfil',
+  admin: '/admin',
+  notifications: '/notificaciones'
+}
+const routeViews = Object.fromEntries(Object.entries(viewRoutes).map(([view, path]) => [path, view]))
+
+function viewFromPath(pathname = window.location.pathname) {
+  if (pathname === '/' || pathname === '') return 'home'
+  return routeViews[pathname] || 'home'
+}
+
+function routeForView(view) {
+  return viewRoutes[view] || '/'
+}
+
+function updateRoute(view, replace = false) {
+  const nextPath = routeForView(view)
+  if (!nextPath || window.location.pathname === nextPath) return
+  const method = replace ? 'replaceState' : 'pushState'
+  window.history[method]({ view }, '', nextPath)
+}
 
 function missingConfigView() {
   app.innerHTML = `
@@ -309,7 +337,7 @@ function emailCopy(eventKey, fallbackSubject, fallbackMessage, vars = {}) {
   }
 }
 
-async function notifyUser(userId, message, subject = 'Nuevo aviso en Digital Guale', action = {}) {
+async function notifyUser(userId, message, subject = `Nuevo aviso en ${APP_NAME}`, action = {}) {
   if (!userId || !message) return
   const copy = emailCopy(action.template, subject, message, action.vars || {})
   const payload = {
@@ -378,11 +406,12 @@ function askQuantity(max) {
   })
 }
 
-async function init() {
+async function init({ respectPath = true } = {}) {
   if (supabaseConfigMissing) {
     missingConfigView()
     return
   }
+  if (respectPath) state.view = viewFromPath()
   const { data: { session } } = await supabase.auth.getSession()
   state.session = session
   state.user = session?.user || null
@@ -396,6 +425,7 @@ async function init() {
     await loadAll()
     render()
   })
+  updateRoute(state.view, true)
 }
 
 async function ensureProfile() {
@@ -467,12 +497,13 @@ function hasActiveOffers(matchId) {
   return state.listings.some(l => Number(l.match_id) === Number(matchId) && l.status === 'active' && Number(l.quantity || 0) > 0)
 }
 
-async function setView(v) {
+async function setView(v, options = {}) {
   state.view = v
   if (v !== 'match') {
     state.selectedMatch = null
     state.selectedMatchId = null
   }
+  if (options.route !== false) updateRoute(v, Boolean(options.replace))
   if (!supabaseConfigMissing) {
     showLoading('Actualizando información...')
     await loadAll()
@@ -1053,13 +1084,38 @@ function notificationsView() {
 }
 
 async function openOrder(id) {
-  const o = state.orders.find(x=>x.id===id)
-  if (!o && !isAdmin()) return
-  const order = o || (await supabase.from('orders').select('*').eq('id', id).maybeSingle()).data
+  const localOrder = state.orders.find(x=>x.id===id)
+  if (!localOrder && !isAdmin()) return
+  const fresh = await supabase.from('orders').select('*').eq('id', id).maybeSingle()
+  const order = fresh.data || localOrder
   state.selectedOrder = order
   const { data } = await supabase.from('messages').select('*').eq('order_id', id).order('created_at', { ascending:true })
   state.messages = data || []
   renderModal()
+  startOperationAutoRefresh()
+}
+
+function startOperationAutoRefresh() {
+  if (operationRefreshTimer) clearInterval(operationRefreshTimer)
+  operationRefreshTimer = setInterval(async () => {
+    if (!state.selectedOrder?.id || supabaseConfigMissing) return
+    const modal = document.getElementById('modalRoot')
+    if (!modal?.querySelector('.operation-modal')) return
+    const chatInput = document.getElementById('chatText')
+    if (document.activeElement === chatInput && chatInput?.value.trim()) return
+    const [orderResult, messagesResult] = await Promise.all([
+      supabase.from('orders').select('*').eq('id', state.selectedOrder.id).maybeSingle(),
+      supabase.from('messages').select('*').eq('order_id', state.selectedOrder.id).order('created_at', { ascending:true })
+    ])
+    if (orderResult.data) state.selectedOrder = orderResult.data
+    if (!messagesResult.error) state.messages = messagesResult.data || []
+    renderModal()
+  }, 5000)
+}
+
+function stopOperationAutoRefresh() {
+  if (operationRefreshTimer) clearInterval(operationRefreshTimer)
+  operationRefreshTimer = null
 }
 
 function timelineStepHtml(step) {
@@ -1171,7 +1227,7 @@ function renderModal() {
     </div>` : ''
   const html = `
     <div class="modal-backdrop show" onclick="if(event.target.classList.contains('modal-backdrop')) window.appActions.closeModal()">
-      <div class="modal">
+      <div class="modal operation-modal">
         <div class="modal-header"><h2>Operación #${String(o.id).slice(0,8)}</h2><button class="secondary-btn" onclick="window.appActions.closeModal()">Cerrar</button></div>
         <div class="modal-body">
           <div class="grid-2">
@@ -1265,23 +1321,19 @@ window.appActions = {
       return
     }
     if (notification.action_view === 'profile' || /verificaci/i.test(notification.message || '')) {
-      state.view = 'profile'
-      render()
+      await setView('profile')
       return
     }
     if (notification.action_view === 'admin') {
-      state.view = 'admin'
-      render()
+      await setView('admin')
       return
     }
-    state.view = 'notifications'
-    render()
+    await setView('notifications')
   },
-  requireLogin(view, matchId='') {
-    if (!state.user) { state.view = 'auth'; render(); return }
+  async requireLogin(view, matchId='') {
+    if (!state.user) { await setView('auth'); return }
     state.prefMatchId = matchId
-    state.view = view
-    render()
+    await setView(view)
     if (view === 'sell' && matchId && canOperate()) setTimeout(() => this.openListingModal(matchId), 0)
   },
   async logout(){
@@ -1294,8 +1346,7 @@ window.appActions = {
     state.profile = null
     state.orders = []
     state.notifications = []
-    state.view = 'home'
-    render()
+    await setView('home')
   },
   async oauthLogin(provider){
     const { error } = await supabase.auth.signInWithOAuth({
@@ -1314,7 +1365,8 @@ window.appActions = {
     else {
       showLoading('Preparando tu cuenta...')
       state.view='home'
-      await init()
+      updateRoute('home', true)
+      await init({ respectPath:false })
       hideLoading()
     }
   },
@@ -1329,7 +1381,7 @@ window.appActions = {
     if (error) { await showMessage(error.message, { title: 'No se pudo crear la cuenta', tone: 'error' }); return }
     if (data.user) {
       await supabase.from('users').upsert({ id:data.user.id,email,first_name,last_name,document_type,document_number,account_status:'active',verification_status:'not_verified',preferred_currency:'ARS' })
-      await notifyUser(data.user.id, 'Tu cuenta fue creada. Verificá tu identidad para poder comprar, vender e intercambiar.', 'Bienvenido a Entradas FIFA', { view:'profile', template:'registro', vars:{ nombre:first_name } })
+      await notifyUser(data.user.id, 'Tu cuenta fue creada. Verificá tu identidad para poder comprar, vender e intercambiar.', `Bienvenido a ${APP_NAME}`, { view:'profile', template:'registro', vars:{ nombre:first_name } })
     }
     await showMessage('Usuario creado. Iniciá sesión.', { title: 'Cuenta lista', tone: 'success' })
   },
@@ -1352,15 +1404,17 @@ window.appActions = {
     state.selectedMatchId = id
     state.selectedMatch = state.matches.find(m=>String(m.id)===String(id))
     state.view='match'
+    updateRoute('home')
     render()
   },
   switchMatchTab(id){
     state.selectedMatchId = id
     state.selectedMatch = state.matches.find(m=>String(m.id)===String(id))
     state.view = 'match'
+    updateRoute('home')
     render()
   },
-  closeMatchTab(id){
+  async closeMatchTab(id){
     state.openMatchTabs = state.openMatchTabs.filter(tabId => String(tabId) !== String(id))
     if (String(state.selectedMatchId) === String(id)) {
       const nextId = state.openMatchTabs[state.openMatchTabs.length - 1]
@@ -1370,7 +1424,7 @@ window.appActions = {
       } else {
         state.selectedMatchId = null
         state.selectedMatch = null
-        state.view = 'home'
+        await setView('home')
       }
     }
     render()
@@ -1527,6 +1581,7 @@ window.appActions = {
     showLoading('Abriendo detalle de la compra...')
     await loadAll()
     state.view='my'
+    updateRoute('my')
     render()
     await openOrder(data.id)
     hideLoading()
@@ -1544,7 +1599,7 @@ window.appActions = {
     else {
       await addSystemMessage(data.id, `Recordatorio de seguridad: ambas partes deben enviar sus entradas a ${PLATFORM_TRANSFER_EMAIL}. El administrador verificará ambos lotes antes de liberar el intercambio.`)
       await notifyUser(l.seller_id, 'Recibiste una nueva oferta de intercambio.', 'Nueva oferta de intercambio', { view:'order', id:data.id, template:'intercambio_oferta', vars:{ partido:listingTicketSummary(l), comprador:userName(state.user.id), vendedor:userName(l.seller_id) } })
-      await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; render()
+      await showMessage('La oferta de intercambio fue enviada.', { title: 'Oferta enviada', tone: 'success' }); await loadAll(); state.view='my'; updateRoute('my'); render()
     }
   },
   async saveProfile(){
@@ -1691,7 +1746,7 @@ window.appActions = {
     window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
   },
   async openOrder(id){ await openOrder(id) },
-  closeModal(){ document.getElementById('modalRoot')?.remove(); state.selectedOrder=null },
+  closeModal(){ stopOperationAutoRefresh(); document.getElementById('modalRoot')?.remove(); state.selectedOrder=null },
   closeVerificationModal(){
     stopCameraStream()
     document.getElementById('modalRoot')?.remove()
@@ -2091,5 +2146,9 @@ window.appActions = {
     render()
   }
 }
+
+window.addEventListener('popstate', async () => {
+  await setView(viewFromPath(), { route:false })
+})
 
 init()
