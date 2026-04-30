@@ -24,6 +24,8 @@ let state = {
   authMode: 'login',
   adminSection: 'users',
   adminMenuOpen: true,
+  operationFilters: { active:true, waiting:true, completed:true, cancelled:true, issue:true },
+  publicationFilters: { available:true, finished:true },
   notificationsOpen: false,
   prefMatchId: '',
   selectedMatch: null,
@@ -131,6 +133,29 @@ const statusLabel = {
   exchange_ready_to_release: 'Intercambio listo para liberar',
   exchange_accepted: 'Intercambio aceptado',
   issue: 'Con problema'
+}
+
+const orderStatusGroup = (status = '') => {
+  if (status === 'completed') return 'completed'
+  if (status === 'cancelled') return 'cancelled'
+  if (status === 'issue') return 'issue'
+  if (['pending_payment','awaiting_buyer_payment','buyer_payment_sent','payment_sent','payment_confirmed'].includes(status)) return 'waiting'
+  return 'active'
+}
+
+const listingStatusGroup = (listing = {}) => listing.status === 'active' && Number(listing.quantity || 0) > 0 ? 'available' : 'finished'
+
+const orderFilterLabels = {
+  active: 'En curso',
+  waiting: 'Pago / validación',
+  completed: 'Completadas',
+  cancelled: 'Canceladas',
+  issue: 'Con problema'
+}
+
+const publicationFilterLabels = {
+  available: 'Disponibles',
+  finished: 'Finalizadas'
 }
 
 const deliveryLabel = {
@@ -405,7 +430,7 @@ async function insertOrderWithFallback(payload) {
   return result
 }
 
-function askQuantity(max) {
+function askQuantity(max, unitPrice = 0, currency = 'ARS') {
   const options = Array.from({ length: Number(max) || 0 }, (_, i) => i + 1)
   return new Promise(resolve => {
     let root = document.getElementById('messageRoot')
@@ -421,7 +446,8 @@ function askQuantity(max) {
           <div class="message-icon">#</div>
           <h2>Cantidad de entradas</h2>
           <p>Disponibles: ${Number(max)}. Elegí una cantidad para reservar.</p>
-          <select id="quantityPrompt" class="select">${options.map(value => `<option value="${value}">${value}</option>`).join('')}</select>
+          <select id="quantityPrompt" class="select" onchange="window.appActions.updateQuantityTotal(${Number(unitPrice || 0)}, '${currency}')">${options.map(value => `<option value="${value}">${value}</option>`).join('')}</select>
+          <div id="quantityTotal" class="quantity-total">${money(unitPrice, currency)} x 1 = ${money(unitPrice, currency)}</div>
           <div class="footer-actions">
             <button class="secondary-btn" onclick="window.appActions.closeMessageModal(null)">Cancelar</button>
             <button class="pill-btn primary" onclick="window.appActions.resolveQuantityPrompt()">Continuar</button>
@@ -773,7 +799,8 @@ function listingCard(l, canBuy, ownerView = false) {
   const exchangeTargets = l.exchange_targets?.matches?.length
     ? l.exchange_targets.matches.join(', ')
     : l.exchange_targets?.text
-  return `<div class="item">
+  const statusGroup = listingStatusGroup(l)
+  return `<div class="item listing-item status-${statusGroup}">
     <div class="listing-head">
       <div><span class="listing-price">${l.price ? money(l.price,l.currency) : 'Intercambio'}</span><strong>${l.type==='exchange'?'Intercambio':'Venta'} · Categoría ${l.category}</strong></div>
       <span class="seller-rating">${sellerReputation(l.seller_id)}</span>
@@ -788,7 +815,7 @@ function listingCard(l, canBuy, ownerView = false) {
       ${l.seats ? `<span>Asientos ${escapeHtml(l.seats)}</span>` : ''}
     </div>
     ${l.type==='exchange' && exchangeTargets ? `<p class="meta">Busca: ${escapeHtml(exchangeTargets)}</p>`:''}
-    ${ownerView ? `<div class="listing-owner-actions"><span class="badge ok">Activa</span><button class="secondary-btn" onclick="window.appActions.openListingModal('', '${l.id}')">Editar</button><button class="pill-btn danger" onclick="window.appActions.deleteListing('${l.id}')">Eliminar</button></div>` : (canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`)}
+    ${ownerView ? `<div class="listing-owner-actions"><span class="badge ${statusGroup === 'available' ? 'ok' : 'warn'}">${statusGroup === 'available' ? 'Disponible' : 'Finalizada'}</span>${statusGroup === 'available' ? `<button class="secondary-btn" onclick="window.appActions.openListingModal('', '${l.id}')">Editar</button><button class="pill-btn danger" onclick="window.appActions.deleteListing('${l.id}')">Eliminar</button>` : ''}</div>` : (canBuy?`<button class="price-btn" onclick="window.appActions.startBuy('${l.id}')">Comprar</button>`:`<button class="secondary-btn" onclick="window.appActions.startExchange('${l.id}')">Ofrecer intercambio</button>`)}
   </div>`
 }
 
@@ -947,10 +974,21 @@ function profileView() {
 
 function myView() {
   const listings = state.listings.filter(l=>l.seller_id === state.user?.id)
+  const filteredListings = listings.filter(l => state.publicationFilters[listingStatusGroup(l)])
   const orders = state.orders
+  const filteredOrders = orders.filter(o => state.operationFilters[orderStatusGroup(o.status)])
+  const filterButton = (type, key, label, active) => `<button class="filter-chip ${active ? 'active' : ''}" onclick="window.appActions.toggleFilter('${type}','${key}')">${label}</button>`
   return `<div class="container"><div class="grid-2">
-    <div class="panel"><h2>Mis compras / operaciones</h2><div class="list">${orders.length?orders.map(orderCard).join(''):`<div class="empty">Todavía no tenés operaciones.</div>`}</div></div>
-    <div class="panel"><h2>Mis publicaciones</h2><div class="list">${listings.length?listings.map(l=>listingCard(l,false)).join(''):`<div class="empty">No tenés publicaciones.</div>`}</div></div>
+    <div class="panel">
+      <div class="section-head compact-head"><div><h2>Mis compras / operaciones</h2><p class="meta">Filtrá por estado para encontrar rápido lo que necesitás revisar.</p></div></div>
+      <div class="filter-row">${Object.entries(orderFilterLabels).map(([key,label]) => filterButton('operation', key, label, state.operationFilters[key])).join('')}</div>
+      <div class="list">${filteredOrders.length?filteredOrders.map(orderCard).join(''):`<div class="empty">No hay operaciones visibles con estos filtros.</div>`}</div>
+    </div>
+    <div class="panel">
+      <div class="section-head compact-head"><div><h2>Mis publicaciones</h2><p class="meta">Disponibles son las que todavía tienen stock activo; finalizadas ya no están a la venta.</p></div></div>
+      <div class="filter-row">${Object.entries(publicationFilterLabels).map(([key,label]) => filterButton('publication', key, label, state.publicationFilters[key])).join('')}</div>
+      <div class="list">${filteredListings.length?filteredListings.map(l=>listingCard(l,false,true)).join(''):`<div class="empty">No hay publicaciones visibles con estos filtros.</div>`}</div>
+    </div>
   </div></div>`
 }
 
@@ -958,7 +996,8 @@ function orderCard(o) {
   const l = state.listings.find(x=>x.id===o.listing_id)
   const m = state.matches.find(x=>Number(x.id)===Number(l?.match_id))
   const unread = orderUnreadMessages(o.id)
-  return `<div class="item">
+  const group = orderStatusGroup(o.status)
+  return `<div class="item order-item status-${group}">
     <strong>Operación #${String(o.id).slice(0,8)} · ${statusLabel[o.status] || o.status} ${unread ? `<span class="message-alert">● ${unread} mensaje${unread === 1 ? '' : 's'} nuevo${unread === 1 ? '' : 's'}</span>` : ''}</strong>
     <p class="meta">${m?`#${m.match_number} ${m.home_code} vs ${m.away_code}`:'Partido'} · Cantidad ${o.quantity || 1} · Total ${money(o.total || l?.price || 0, l?.currency || 'ARS')}</p>
     <button class="secondary-btn" onclick="window.appActions.openOrder('${o.id}')">Ver detalle / chat</button>
@@ -1148,7 +1187,7 @@ function startOperationAutoRefresh() {
     const hasNewMessage = latestMessageValue(nextMessages) > previousLatest
     replaceOrderMessages(state.selectedOrder.id, nextMessages)
     if (hasNewMessage) markOrderMessagesSeen(state.selectedOrder.id, nextMessages)
-    renderModal({ preserveScroll:!hasNewMessage, autoChatBottom:hasNewMessage })
+    renderModal({ preserveScroll:!hasNewMessage, preserveModalScroll:hasNewMessage, autoChatBottom:hasNewMessage })
   }, 5000)
 }
 
@@ -1239,9 +1278,9 @@ function renderModal(options = {}) {
   if (!o) return
   const previousModal = document.querySelector('#modalRoot .operation-modal')
   const previousChat = document.querySelector('#modalRoot .chat-box')
-  const scrollState = options.preserveScroll ? {
+  const scrollState = options.preserveScroll || options.preserveModalScroll ? {
     modalTop: previousModal?.scrollTop || 0,
-    chatTop: previousChat?.scrollTop || 0
+    chatTop: options.preserveScroll ? (previousChat?.scrollTop || 0) : null
   } : null
   const l = state.listings.find(x=>x.id===o.listing_id) || {}
   const m = state.matches.find(x=>Number(x.id)===Number(l.match_id)) || {}
@@ -1312,7 +1351,7 @@ function renderModal(options = {}) {
               <div class="chat-box">${chatMessages.map(msg=>`<div class="msg ${msg.sender_id===state.user?.id?'me':(!msg.sender_id?'system':'')}">${escapeHtml(msg.text || '')}${msg.attachment_path ? `<div class="message-attachment"><button class="link-btn inline-link" onclick="window.appActions.viewChatAttachment('${escapeHtml(msg.attachment_path)}')">📎 ${escapeHtml(msg.attachment_name || 'Archivo adjunto')}</button></div>` : ''}<br><small>${!msg.sender_id ? 'Administrador automático · ' : ''}${fmtDate(msg.created_at)}</small></div>`).join('')}</div>
               <div class="chat-composer">
                 <input class="input" id="chatText" placeholder="Escribir mensaje..." onkeydown="window.appActions.handleChatKey(event, '${o.id}')" />
-                <label class="secondary-btn attach-btn">Adjuntar<input type="file" accept="image/*,.pdf" onchange="window.appActions.uploadChatAttachment('${o.id}', this.files?.[0])"></label>
+                <label class="attach-icon-btn" title="Adjuntar imagen o PDF">📎<input type="file" accept="image/*,.pdf" onchange="window.appActions.uploadChatAttachment('${o.id}', this.files?.[0])"></label>
                 <button class="pill-btn primary" onclick="window.appActions.sendMessage('${o.id}')">Enviar</button>
               </div>
             </div>
@@ -1332,7 +1371,8 @@ function renderModal(options = {}) {
       const nextModal = document.querySelector('#modalRoot .operation-modal')
       const nextChat = document.querySelector('#modalRoot .chat-box')
       if (nextModal) nextModal.scrollTop = scrollState.modalTop
-      if (nextChat) nextChat.scrollTop = scrollState.chatTop
+      if (nextChat && scrollState.chatTop !== null) nextChat.scrollTop = scrollState.chatTop
+      if (nextChat && options.autoChatBottom) nextChat.scrollTop = nextChat.scrollHeight
     })
   } else if (options.autoChatBottom) {
     requestAnimationFrame(() => {
@@ -1373,6 +1413,11 @@ window.appActions = {
   },
   toggleNotifications(){
     state.notificationsOpen = !state.notificationsOpen
+    render()
+  },
+  toggleFilter(type, key){
+    if (type === 'operation' && key in state.operationFilters) state.operationFilters[key] = !state.operationFilters[key]
+    if (type === 'publication' && key in state.publicationFilters) state.publicationFilters[key] = !state.publicationFilters[key]
     render()
   },
   async markNotificationRead(id){
@@ -1417,15 +1462,21 @@ window.appActions = {
   },
   async logout(){
     showLoading('Cerrando sesión...')
-    const { error } = await supabase.auth.signOut()
-    hideLoading()
-    if (error) return showMessage(error.message, { title: 'No se pudo salir', tone: 'error' })
-    state.session = null
-    state.user = null
-    state.profile = null
-    state.orders = []
-    state.notifications = []
-    await setView('home')
+    try {
+      const { error } = await supabase.auth.signOut()
+      if (error) return showMessage(error.message, { title: 'No se pudo salir', tone: 'error' })
+      state.session = null
+      state.user = null
+      state.profile = null
+      state.orders = []
+      state.notifications = []
+      state.messages = []
+      state.view = 'home'
+      updateRoute('home', true)
+      render()
+    } finally {
+      hideLoading()
+    }
   },
   async oauthLogin(provider){
     const { error } = await supabase.auth.signInWithOAuth({
@@ -1640,7 +1691,7 @@ window.appActions = {
     const l = state.listings.find(x=>x.id===listingId)
     if (!l || l.status !== 'active' || Number(l.quantity || 0) <= 0) return showMessage('Esta oferta ya no tiene entradas disponibles.', { title: 'Sin disponibilidad', tone: 'error' })
     if (l.seller_id === state.user.id) return showMessage('No podés comprar tus propias entradas.', { title: 'Operación no permitida' })
-    const qty = Number(await askQuantity(l.quantity))
+    const qty = Number(await askQuantity(l.quantity, Number(l.price || 0), l.currency || 'ARS'))
     if (!qty) return
     if (qty > Number(l.quantity)) return showMessage('No hay suficientes entradas disponibles.', { title: 'Cantidad no disponible', tone: 'error' })
     showLoading('Reservando entradas...')
@@ -1825,12 +1876,23 @@ window.appActions = {
     window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
   },
   async openOrder(id){ await openOrder(id) },
-  closeModal(){ stopOperationAutoRefresh(); document.getElementById('modalRoot')?.remove(); state.selectedOrder=null },
+  async closeModal(){
+    stopOperationAutoRefresh()
+    document.getElementById('modalRoot')?.remove()
+    state.selectedOrder=null
+    await loadAll()
+    render()
+  },
   closeVerificationModal(){
     stopCameraStream()
     document.getElementById('modalRoot')?.remove()
   },
   closeMessageModal,
+  updateQuantityTotal(unitPrice, currency){
+    const qty = Number(document.getElementById('quantityPrompt')?.value || 1)
+    const total = document.getElementById('quantityTotal')
+    if (total) total.textContent = `${money(unitPrice, currency)} x ${qty} = ${money(unitPrice * qty, currency)}`
+  },
   resolveQuantityPrompt(){
     const input = document.getElementById('quantityPrompt')
     const value = Number(input?.value || 0)
@@ -1840,7 +1902,10 @@ window.appActions = {
     const text = document.getElementById('chatText').value.trim()
     if (!text) return
     await supabase.from('messages').insert({ order_id:orderId, sender_id:state.user.id, text })
-    await openOrder(orderId)
+    const { data } = await supabase.from('messages').select('*').eq('order_id', orderId).order('created_at', { ascending:true })
+    replaceOrderMessages(orderId, data || [])
+    markOrderMessagesSeen(orderId, data || [])
+    renderModal({ preserveModalScroll:true, autoChatBottom:true })
   },
   handleChatKey(event, orderId){
     if (event.key !== 'Enter' || event.shiftKey) return
@@ -1865,7 +1930,10 @@ window.appActions = {
     }
     hideLoading()
     if (insert.error) return showMessage(insert.error.message, { title: 'No se pudo enviar el archivo', tone: 'error' })
-    await openOrder(orderId)
+    const { data } = await supabase.from('messages').select('*').eq('order_id', orderId).order('created_at', { ascending:true })
+    replaceOrderMessages(orderId, data || [])
+    markOrderMessagesSeen(orderId, data || [])
+    renderModal({ preserveModalScroll:true, autoChatBottom:true })
   },
   async viewChatAttachment(path){
     if (!path) return
