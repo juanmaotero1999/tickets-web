@@ -1744,18 +1744,22 @@ window.appActions = {
   async logout(){
     showLoading('Cerrando sesión...')
     try {
-      const { error } = await supabase.auth.signOut()
-      if (error) return showMessage(error.message, { title: 'No se pudo salir', tone: 'error' })
+      const { error } = await withTimeout(supabase.auth.signOut({ scope: 'local' }), 6000, 'Cerrar sesión')
+      if (error) throw error
+    } catch (error) {
+      console.warn('Cierre de sesión local forzado', error)
+    } finally {
       state.session = null
       state.user = null
       state.profile = null
       state.orders = []
       state.notifications = []
       state.messages = []
+      state.selectedOrder = null
+      state.notificationsOpen = false
       state.view = 'home'
       updateRoute('home', true)
       render()
-    } finally {
       hideLoading()
     }
   },
@@ -2616,11 +2620,23 @@ window.appActions = {
                 <p class="meta">${escapeHtml(u.email || '')}</p>
               </div>
             </div>
+            <div class="admin-avatar-uploader">
+              <div>
+                <strong>Foto de perfil</strong>
+                <p class="meta">Podés cargar o reemplazar la foto del usuario desde el administrador. La imagen se guarda como avatar público.</p>
+              </div>
+              <label class="compact-upload">
+                <input type="file" accept="image/*" onchange="window.appActions.adminUploadUserAvatar('${u.id}', this.files?.[0])">
+                <span>Subir foto</span>
+              </label>
+            </div>
             <div class="form-grid admin-user-grid">
               <div class="field"><label>Nombre</label><input id="admin_first_name" class="input" value="${value('first_name')}"></div>
               <div class="field"><label>Apellido</label><input id="admin_last_name" class="input" value="${value('last_name')}"></div>
               <div class="field"><label>Email</label><input id="admin_email" class="input" value="${value('email')}"></div>
               <div class="field"><label>Rol</label><select id="admin_role" class="select"><option value="user" ${selected('role','user')}>Usuario</option><option value="admin" ${selected('role','admin')}>Admin</option></select></div>
+              <div class="field"><label>Estado de cuenta</label><select id="admin_account_status" class="select"><option value="active" ${selected('account_status','active')}>Activa</option><option value="suspended" ${selected('account_status','suspended')}>Suspendida</option><option value="blocked" ${selected('account_status','blocked')}>Bloqueada</option></select></div>
+              <div class="field"><label>Fecha de nacimiento</label><input id="admin_birth_date" class="input" type="date" value="${escapeHtml(u.birth_date ? String(u.birth_date).slice(0,10) : '')}"></div>
               <div class="field"><label>Nacionalidad</label><select id="admin_nationality" class="select">${countryOptionsHtml(u.nationality || 'AR')}</select></div>
               <div class="field"><label>Género</label><select id="admin_sex" class="select">${sexOptionsHtml(u.sex || '')}</select></div>
               <div class="field"><label>Tipo documento</label><input id="admin_document_type" class="input" value="${value('document_type')}"></div>
@@ -2630,6 +2646,10 @@ window.appActions = {
               <div class="field"><label>País</label><select id="admin_country" class="select">${countryOptionsHtml(u.country || 'AR')}</select></div>
               <div class="field"><label>Provincia/Estado</label><input id="admin_state" class="input" value="${value('state')}"></div>
               <div class="field"><label>Ciudad</label><input id="admin_city" class="input" value="${value('city')}"></div>
+              <div class="field full-field"><label>Dirección</label><input id="admin_address" class="input" value="${value('address')}"></div>
+              <div class="field"><label>Zona horaria</label><select id="admin_timezone" class="select">${timeZoneOptionsHtml(u.timezone || userTimeZone())}</select></div>
+              <div class="field"><label>Idioma preferido</label><select id="admin_preferred_language" class="select">${languageOptionsHtml(u.preferred_language || 'es')}</select></div>
+              <div class="field"><label>Divisa preferida</label><select id="admin_preferred_currency" class="select"><option value="ARS" ${selected('preferred_currency','ARS')}>ARS</option><option value="USD" ${selected('preferred_currency','USD')}>USD</option></select></div>
               <div class="field"><label>Verificación</label><select id="admin_verification_status" class="select">
                 <option value="not_verified" ${selected('verification_status','not_verified')}>No verificado</option>
                 <option value="pending_review" ${selected('verification_status','pending_review')}>Pendiente</option>
@@ -2651,10 +2671,36 @@ window.appActions = {
         </div>
       </div>`
   },
+  async adminUploadUserAvatar(userId, file){
+    if (!isAdmin() || !file) return
+    if (!file.type?.startsWith('image/')) {
+      return showMessage('La foto de perfil debe ser una imagen.', { title: 'Archivo inválido', tone: 'error' })
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      return showMessage('La imagen no puede superar los 8 MB.', { title: 'Archivo demasiado grande', tone: 'error' })
+    }
+    showLoading('Subiendo foto...')
+    try {
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+      const path = `${userId}/admin-avatar-${Date.now()}.${ext}`
+      const upload = await withTimeout(supabase.storage.from('profile-photos').upload(path, file, { upsert:false, contentType:file.type }), 12000, 'Subida de foto')
+      if (upload.error) throw upload.error
+      const { data } = supabase.storage.from('profile-photos').getPublicUrl(path)
+      const update = await withTimeout(supabase.from('users').update({ avatar_url: data.publicUrl }).eq('id', userId), 8000, 'Actualización de avatar')
+      if (update.error) throw update.error
+      await loadAll()
+      hideLoading()
+      this.openUserEditor(userId)
+      await showMessage('La foto de perfil fue actualizada.', { title: 'Foto cargada', tone: 'success' })
+    } catch (error) {
+      hideLoading()
+      await showMessage(error.message || 'No se pudo subir la foto.', { title: 'Error al subir', tone: 'error' })
+    }
+  },
   async saveAdminUser(userId){
     if (!isAdmin()) return
     const currentUser = state.users.find(u => u.id === userId) || {}
-    const textFields = ['first_name','last_name','email','role','nationality','sex','document_type','document_number','document_country','phone','country','state','city','verification_status']
+    const textFields = ['first_name','last_name','email','role','account_status','birth_date','nationality','sex','document_type','document_number','document_country','phone','country','state','city','address','timezone','preferred_language','preferred_currency','verification_status']
     const payload = {}
     textFields.forEach(k => payload[k] = document.getElementById(`admin_${k}`)?.value || '')
     payload.seller_sales_count = Number(document.getElementById('admin_seller_sales_count')?.value || 0)
