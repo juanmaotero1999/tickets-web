@@ -7,6 +7,7 @@ let activeCameraStream = null
 let operationRefreshTimer = null
 let loadingTimer = null
 let backgroundRefreshTimer = null
+let pendingAuthNotice = null
 
 let state = {
   session: null,
@@ -74,6 +75,60 @@ function updateRoute(view, replace = false) {
   if (!nextPath || window.location.pathname === nextPath) return
   const method = replace ? 'replaceState' : 'pushState'
   window.history[method]({ view }, '', nextPath)
+}
+
+function cleanAuthUrl(view = state.view || 'home') {
+  const nextPath = routeForView(view)
+  window.history.replaceState({ view }, '', nextPath)
+}
+
+async function consumeAuthRedirect() {
+  const url = new URL(window.location.href)
+  const code = url.searchParams.get('code')
+  const error = url.searchParams.get('error') || url.searchParams.get('error_code')
+  const errorDescription = url.searchParams.get('error_description')
+  const hasTokenHash = window.location.hash.includes('access_token') || window.location.hash.includes('refresh_token')
+
+  if (error || errorDescription) {
+    pendingAuthNotice = {
+      title: 'No se pudo confirmar',
+      message: errorDescription || error || 'El enlace de confirmación no pudo procesarse.',
+      tone: 'error'
+    }
+    cleanAuthUrl('auth')
+    state.view = 'auth'
+    return
+  }
+
+  if (code) {
+    try {
+      const { error: exchangeError } = await withTimeout(supabase.auth.exchangeCodeForSession(code), 9000, 'Confirmación de cuenta')
+      if (exchangeError) throw exchangeError
+      pendingAuthNotice = {
+        title: 'Cuenta confirmada',
+        message: 'Tu email fue confirmado correctamente. Ya podés completar tu perfil y verificación.',
+        tone: 'success'
+      }
+      state.view = 'home'
+      cleanAuthUrl('home')
+    } catch (err) {
+      pendingAuthNotice = {
+        title: 'No se pudo confirmar',
+        message: err.message || 'El enlace de confirmación venció o no es válido.',
+        tone: 'error'
+      }
+      state.view = 'auth'
+      cleanAuthUrl('auth')
+    }
+  } else if (hasTokenHash) {
+    pendingAuthNotice = {
+      title: 'Cuenta confirmada',
+      message: 'Tu email fue confirmado correctamente.',
+      tone: 'success'
+    }
+    state.view = 'home'
+    cleanAuthUrl('home')
+  }
 }
 
 function missingConfigView() {
@@ -563,6 +618,7 @@ async function init({ respectPath = true } = {}) {
     return
   }
   if (respectPath) state.view = viewFromPath()
+  await consumeAuthRedirect()
   const { data: { session } } = await withTimeout(supabase.auth.getSession(), 8000, 'Sesión')
   state.session = session
   state.user = session?.user || null
@@ -573,6 +629,11 @@ async function init({ respectPath = true } = {}) {
     console.warn('Carga inicial incompleta', error)
   }
   render()
+  if (pendingAuthNotice) {
+    const notice = pendingAuthNotice
+    pendingAuthNotice = null
+    setTimeout(() => showMessage(notice.message, { title: notice.title, tone: notice.tone }), 0)
+  }
   supabase.auth.onAuthStateChange(async (_event, session) => {
     state.session = session
     state.user = session?.user || null
@@ -1832,7 +1893,14 @@ window.appActions = {
     let data = null
     let error = null
     try {
-      ;({ data, error } = await withTimeout(supabase.auth.signUp({ email, password, options:{ data:{ first_name,last_name,country,document_type,document_number,document_country } } }), 10000, 'Registro'))
+      ;({ data, error } = await withTimeout(supabase.auth.signUp({
+        email,
+        password,
+        options:{
+          emailRedirectTo: `${window.location.origin}/ingresar`,
+          data:{ first_name,last_name,country,document_type,document_number,document_country }
+        }
+      }), 10000, 'Registro'))
     } catch (err) {
       error = err
     }
